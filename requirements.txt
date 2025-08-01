@@ -1,0 +1,15 @@
+streamlit
+yfinance
+pandas
+numpy
+plotly
+prophet
+transformers
+torch
+cvxpy
+scikit-learn
+streamlit_autorefresh
+requests
+ta
+python-dotenv
+
