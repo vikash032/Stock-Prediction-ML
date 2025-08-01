@@ -308,7 +308,123 @@ def main():
         st.error(f"No data available for {ticker}. Please try a different ticker.")
         return
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Market Data", "Forecasting", "Sentiment Analysis", "Portfolio Optimization"])
+    # Create tabs with Home as the first tab
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Home", "Market Data", "Forecasting", "Sentiment Analysis", "Portfolio Optimization"])
+
+    # Home Tab Content
+    with tab1:
+        st.markdown('<div class="subheader">🚀 Welcome to Advanced Stock Analytics</div>', unsafe_allow_html=True)
+        
+        # Project Introduction
+        st.markdown("""
+        <div class="metric-card">
+            <h3>📊 Project Overview</h3>
+            <p>Advanced Stock Analytics is a comprehensive financial analysis platform that combines real-time market data, 
+            predictive forecasting, sentiment analysis, and portfolio optimization to empower investors with actionable insights.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Key Features Section
+        st.markdown('<div class="subheader">✨ Key Features</div>', unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("""
+            <div class="improvement-card">
+                <h4>📈 Real-Time Market Intelligence</h4>
+                <ul>
+                    <li>Live price tracking with candlestick charts</li>
+                    <li>Technical indicators (RSI, MACD, Moving Averages)</li>
+                    <li>Volatility and return metrics</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with col2:
+            st.markdown("""
+            <div class="improvement-card">
+                <h4>🔮 Hybrid Forecasting</h4>
+                <ul>
+                    <li>Prophet time-series forecasting</li>
+                    <li>Confidence interval projections</li>
+                    <li>Risk assessment metrics</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with col3:
+            st.markdown("""
+            <div class="improvement-card">
+                <h4>💹 Portfolio Optimization</h4>
+                <ul>
+                    <li>Modern Portfolio Theory (MPT) implementation</li>
+                    <li>Risk-adjusted allocation strategies</li>
+                    <li>Monte Carlo simulations</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Unique Features Section
+        st.markdown('<div class="subheader">💎 Unique Features</div>', unsafe_allow_html=True)
+        
+        unique_col1, unique_col2 = st.columns([2, 1])
+        with unique_col1:
+            st.markdown("""
+            <div class="improvement-card">
+                <h4>🧠 Sentiment-Driven Analysis</h4>
+                <p>Our proprietary sentiment engine combines:</p>
+                <ul>
+                    <li>FinBERT financial sentiment analysis model</li>
+                    <li>Real-time news aggregation from global sources</li>
+                    <li>Bull/Bear market sentiment gauge</li>
+                    <li>Sentiment-weighted risk assessment</li>
+                </ul>
+            </div>
+            
+            <div class="improvement-card">
+                <h4>⚡ Adaptive Portfolio Engine</h4>
+                <ul>
+                    <li>Dynamic risk tolerance scaling (1-10)</li>
+                    <li>Correlation heatmap visualization</li>
+                    <li>Return comparison metrics</li>
+                    <li>Monte Carlo simulation for risk profiling</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with unique_col2:
+            st.markdown("""
+            <div class="metric-card" style="text-align:center; background:linear-gradient(135deg, #1a2a6c, #b21f1f, #1a2a6c);">
+                <h3>Tech Stack</h3>
+                <div style="font-size:2.5rem;">🤖</div>
+                <p><strong>AI-Powered Analytics</strong></p>
+                <ul style="text-align:left;">
+                    <li>Prophet Forecasting</li>
+                    <li>FinBERT NLP</li>
+                    <li>CVXPY Optimization</li>
+                </ul>
+                <p><strong>Real-Time Data</strong></p>
+                <ul style="text-align:left;">
+                    <li>Yahoo Finance API</li>
+                    <li>NewsAPI Integration</li>
+                    <li>Streamlit Live Updates</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Usage Instructions
+        st.markdown('<div class="subheader">🚦 Getting Started</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="improvement-card">
+            <ol>
+                <li><b>Select a stock</b> from the sidebar dropdown</li>
+                <li><b>Adjust date ranges</b> and forecast periods</li>
+                <li><b>Explore different tabs</b> for various analyses</li>
+                <li><b>Build portfolios</b> with multiple stocks</li>
+                <li><b>Adjust risk tolerance</b> for personalized optimization</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
 
     with tab1:
         st.markdown('<div class="subheader">Real-Time Market Data</div>', unsafe_allow_html=True)
