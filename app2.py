@@ -1,3 +1,10 @@
+from dotenv import load_dotenv
+import os
+load_dotenv()
+
+api_key = os.getenv("NEWS_API_KEY")
+
+#import libraries
 import torch
 import streamlit as st
 import yfinance as yf
