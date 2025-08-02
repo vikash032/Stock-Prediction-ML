@@ -1,5 +1,14 @@
 import os
-os.environ["USE_TF"] = "0"
+os.environ["USE_TF"] = "0"  # 💣 prevents any TensorFlow import attempt
+
+from transformers import pipeline
+import streamlit as st
+
+@st.cache_resource(show_spinner=False)
+def load_sentiment_model():
+    return pipeline("sentiment-analysis", model="ProsusAI/finbert", framework="pt")
+    
+sentiment_model = load_sentiment_model()
 
 from dotenv import load_dotenv
 import os
@@ -1504,33 +1513,38 @@ def main():
 
 
     # Sentiment Analysis Tab
+
     with tab4:
         st.markdown('<div class="subheader">Sentiment Analysis</div>', unsafe_allow_html=True)
+
+        # ✅ Load model just once (cached)
+        sentiment_model = load_sentiment_model()
+
+        # 📥 Get news
         news_items = get_news(ticker)
 
         if not news_items:
             st.warning("No recent news found")
         else:
-            sentiment_model = load_sentiment_model()
-            
-            # Batch processing for efficiency
+            # 🧹 Clean and prepare all news text
             all_texts = []
             for news in news_items:
-                title = news['title'] or "No title"
-                summary = news['summary'] or ""
+                title = news.get('title') or "No title"
+                summary = news.get('summary') or ""
                 text = clean_text(f"{title}. {summary}")
                 if text.strip():
                     all_texts.append(text)
-            
-            # Process in batches
+
+            # 📦 Break into batches (8 per batch for FinBERT)
+            news_batches = [all_texts[i:i+8] for i in range(0, len(all_texts), 8)]
+
+            # ✅ Use model here without reloading
             sentiments = []
-            for i in range(0, len(all_texts), 8):
-                batch = all_texts[i:i+8]
+            for batch in news_batches:
                 try:
                     sentiments.extend(sentiment_model(batch))
                 except Exception as e:
                     st.warning(f"Sentiment error: {str(e)}")
-                    # Add neutral sentiment as fallback
                     sentiments.extend([{'label': 'NEUTRAL', 'score': 0.5}] * len(batch))
             
             # Display results
