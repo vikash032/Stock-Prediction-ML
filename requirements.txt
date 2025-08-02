@@ -10,6 +10,7 @@ transformers
 torch
 cvxpy
 scikit-learn
+pytorch_forecasting
 streamlit-autorefresh
 requests
 ta
