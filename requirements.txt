@@ -1,10 +1,12 @@
+tensorflow==2.13.0
+keras==2.13.1
 streamlit
 yfinance
 pandas
 numpy
 plotly
 prophet
-transformers==4.38.2
+transformers
 torch
 cvxpy
 scikit-learn
