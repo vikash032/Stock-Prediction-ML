@@ -1513,7 +1513,6 @@ def main():
 
 
     # Sentiment Analysis Tab
-
     with tab4:
         st.markdown('<div class="subheader">Sentiment Analysis</div>', unsafe_allow_html=True)
 
@@ -1526,7 +1525,7 @@ def main():
         if not news_items:
             st.warning("No recent news found")
         else:
-            # 🧹 Clean and prepare all news text
+            # 🧹 Clean and prepare news text
             all_texts = []
             for news in news_items:
                 title = news.get('title') or "No title"
@@ -1535,10 +1534,11 @@ def main():
                 if text.strip():
                     all_texts.append(text)
 
-            # 📦 Break into batches (8 per batch for FinBERT)
-            news_batches = [all_texts[i:i+8] for i in range(0, len(all_texts), 8)]
+            # 📦 Break into batches of max 5 items
+            batch_size = 5
+            news_batches = [all_texts[i:i+batch_size] for i in range(0, len(all_texts), batch_size)]
 
-            # ✅ Use model here without reloading
+            # 🔍 Run sentiment analysis
             sentiments = []
             for batch in news_batches:
                 try:
