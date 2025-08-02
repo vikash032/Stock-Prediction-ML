@@ -1,5 +1,3 @@
-import os
-os.environ["USE_TF"] = "0"  # 💣 prevents any TensorFlow import attempt
 
 from transformers import pipeline
 import streamlit as st
