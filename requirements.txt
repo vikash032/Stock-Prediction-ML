@@ -5,6 +5,7 @@ numpy
 plotly
 prophet
 transformers
+sequential
 torch
 cvxpy
 scikit-learn
