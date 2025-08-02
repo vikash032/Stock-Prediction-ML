@@ -41,8 +41,6 @@ from keras.optimizers import Adam
 import time
 import random
 
-import os
-os.environ["USE_TF"] = "0"
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
