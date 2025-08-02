@@ -5,14 +5,13 @@ numpy
 plotly
 prophet
 transformers
-sequential
+tensorflow
 torch
 cvxpy
 scikit-learn
-tensorflow
 streamlit_autorefresh
 requests
 ta
-tf-keras
 python-dotenv
+
 
