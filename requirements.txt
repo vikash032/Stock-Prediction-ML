@@ -11,5 +11,6 @@ scikit-learn
 streamlit_autorefresh
 requests
 ta
+tf-keras
 python-dotenv
 
