@@ -9,6 +9,7 @@ sequential
 torch
 cvxpy
 scikit-learn
+tensorflow
 streamlit_autorefresh
 requests
 ta
