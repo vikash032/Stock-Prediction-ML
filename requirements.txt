@@ -4,7 +4,7 @@ pandas
 numpy
 plotly
 prophet
-transformers
+transformers==4.38.2
 torch
 cvxpy
 scikit-learn
