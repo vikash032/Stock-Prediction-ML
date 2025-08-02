@@ -31,6 +31,9 @@ from keras.optimizers import Adam
 import time
 import random
 
+import os
+os.environ["USE_TF"] = "0"
+
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
@@ -603,9 +606,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+from transformers import pipeline
+import streamlit as st
+
 @st.cache_resource(show_spinner=False)
 def load_sentiment_model():
-    return pipeline("sentiment-analysis", model="ProsusAI/finbert")
+    return pipeline("sentiment-analysis", model="ProsusAI/finbert", framework="pt")
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_stock_data(ticker, start, end):
