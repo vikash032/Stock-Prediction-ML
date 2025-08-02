@@ -12,6 +12,7 @@ cvxpy
 scikit-learn
 pytorch_forecasting
 streamlit-autorefresh
+tf-keras
 requests
 ta
 python-dotenv
