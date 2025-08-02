@@ -1,3 +1,6 @@
+import os
+os.environ["USE_TF"] = "0"
+
 from dotenv import load_dotenv
 import os
 load_dotenv()
