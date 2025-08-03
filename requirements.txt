@@ -17,4 +17,3 @@ requests
 ta
 python-dotenv
 shap
-TA-Lib
