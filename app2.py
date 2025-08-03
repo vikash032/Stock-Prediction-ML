@@ -1407,7 +1407,7 @@ def main():
             # Use FinancialModelingPrep API with our key
             url = "https://financialmodelingprep.com/stable/economic-calendar"
             
-            params = {api_key = os.getenv("NEWS_API_KEY") ,"from": "2025‑08‑01","to": "2025‑08‑31"}
+            params = {"api_key" = os.getenv("NEWS_API_KEY") ,"from": "2025‑08‑01","to": "2025‑08‑31"}
             
             response = requests.get(url)
             response.raise_for_status()
