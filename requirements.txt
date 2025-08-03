@@ -17,5 +17,5 @@ requests
 ta
 python-dotenv
 shap
-
+talib
 
