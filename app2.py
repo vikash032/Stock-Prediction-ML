@@ -31,7 +31,7 @@ from pytorch_lightning.callbacks import EarlyStopping
 import shap
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
-import talib
+#import talib
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
