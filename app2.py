@@ -535,9 +535,9 @@ def backtest_strategy(data, strategy, params):
             'trades': 0
         }
     
-    # Initialize portfolio
+    # Initialize portfolio - use scalar values
     cash = 10000
-    position = 0
+    position = 0  # Scalar integer
     portfolio_value = [cash]
     trades = []
     
@@ -548,33 +548,42 @@ def backtest_strategy(data, strategy, params):
         data['SMA_short'] = data['Close'].rolling(short_window).mean()
         data['SMA_long'] = data['Close'].rolling(long_window).mean()
     
-    for i in range(long_window, len(data)):
+    # Ensure we have enough data after indicator calculation
+    start_index = max(1, long_window) if 'long_window' in locals() else 1
+    
+    for i in range(start_index, len(data)):
         price = data['Close'].iloc[i]
         prev_price = data['Close'].iloc[i-1]
         
-        # Generate signal based on strategy
+        # Generate signal based on strategy - ensure scalar output
         signal = 0
         
         if strategy == "Moving Average Crossover":
-            if data['SMA_short'].iloc[i-1] < data['SMA_long'].iloc[i-1] and \
-               data['SMA_short'].iloc[i] > data['SMA_long'].iloc[i]:
+            # Convert conditions to explicit scalars
+            cond1 = data['SMA_short'].iloc[i-1] < data['SMA_long'].iloc[i-1]
+            cond2 = data['SMA_short'].iloc[i] > data['SMA_long'].iloc[i]
+            cond3 = data['SMA_short'].iloc[i-1] > data['SMA_long'].iloc[i-1]
+            cond4 = data['SMA_short'].iloc[i] < data['SMA_long'].iloc[i]
+            
+            if cond1 and cond2:
                 signal = 1  # Golden cross - buy
-            elif data['SMA_short'].iloc[i-1] > data['SMA_long'].iloc[i-1] and \
-                 data['SMA_short'].iloc[i] < data['SMA_long'].iloc[i]:
+            elif cond3 and cond4:
                 signal = -1  # Death cross - sell
         
-        # Execute trades
-        if signal == 1 and cash > 0:
-            # Buy with all cash
-            shares = cash // price
-            position += shares
-            cash -= shares * price
-            trades.append(('buy', data.index[i], price, shares))
-        elif signal == -1 and position > 0:
-            # Sell all position
-            cash += position * price
-            trades.append(('sell', data.index[i], price, position))
-            position = 0
+        # Execute trades - position is always scalar
+        if signal == 1:
+            if cash > 0:
+                # Buy with all cash
+                shares = cash // price
+                position += shares
+                cash -= shares * price
+                trades.append(('buy', data.index[i], price, shares))
+        elif signal == -1:
+            if position > 0:  # Now comparing scalar > 0
+                # Sell all position
+                cash += position * price
+                trades.append(('sell', data.index[i], price, position))
+                position = 0
         
         # Update portfolio value
         portfolio_value.append(cash + position * price)
