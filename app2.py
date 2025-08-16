@@ -684,6 +684,41 @@ class RealTimeMonitor:
             logger.error(f"Redis get error: {str(e)}")
             return None
 
+# Add this function to the UTILITY FUNCTIONS section
+
+def render_metrics(data, ticker, start_date, end_date):
+    """Render key metrics for a stock"""
+    if len(data) > 1 and 'Close' in data.columns:
+        current_price = float(data['Close'].iloc[-1])
+        prev_price = float(data['Close'].iloc[-2]) if len(data) >= 2 else current_price
+        volume = float(data['Volume'].iloc[-1]) if 'Volume' in data.columns else 0.0
+        daily_change = ((current_price - prev_price) / prev_price * 100) if prev_price != 0 else 0.0
+        volatility = float(calculate_volatility(data))
+        annual_return = float(calculate_annual_return(data, start_date, end_date) * 100)  # Convert to percentage
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.markdown(f'''
+            <div class="metric-card">
+                <b>Current Price</b><br>${current_price:.2f}
+            </div>''', unsafe_allow_html=True)
+        col2.markdown(f'''
+            <div class="metric-card">
+                <b>Daily Change</b><br>{daily_change:.2f}%
+            </div>''', unsafe_allow_html=True)
+        col3.markdown(f'''
+            <div class="metric-card">
+                <b>Annual Volatility</b><br>{volatility:.2f}%
+            </div>''', unsafe_allow_html=True)
+        col4.markdown(f'''
+            <div class="metric-card">
+                <b>Annual Return</b><br>{annual_return:.2f}%
+            </div>''', unsafe_allow_html=True)
+    else:
+        st.warning("Insufficient data to calculate metrics")
+
+# Initialize real-time monitor
+rt_monitor = RealTimeMonitor()
+
 # ------------------ UTILITY FUNCTIONS ------------------
 def calculate_annual_return(data, start_date, end_date):
     """Calculate annualized return for a stock"""
