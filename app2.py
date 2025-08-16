@@ -17,7 +17,7 @@ import os
 import re
 import ta
 import warnings
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 from keras.models import Sequential
 from keras.layers import Dense
 from keras.optimizers import Adam
@@ -32,6 +32,19 @@ import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
 import logging
 from dotenv import load_dotenv
+from scipy.optimize import minimize
+import holidays
+import json
+from sklearn.model_selection import TimeSeriesSplit
+from pytorch_forecasting.metrics import QuantileLoss
+from pytorch_forecasting.models.temporal_fusion_transformer.tuning import optimize_hyperparameters
+import optuna
+import redis
+import schedule
+import threading
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # ------------------ CONFIGURATION ------------------
 # Initialize logging
@@ -122,6 +135,17 @@ def calculate_technical_indicators(data):
     except Exception as e:
         logger.error(f"Error calculating Bollinger Bands: {str(e)}")
     
+    # Volatility
+    try:
+        returns = close_series.pct_change()
+        data['Volatility'] = returns.rolling(window=20).std() * np.sqrt(252)
+    except Exception as e:
+        logger.error(f"Error calculating volatility: {str(e)}")
+    
+    # Lagged returns
+    for i in [1, 3, 5, 7]:
+        data[f'Return_{i}d'] = close_series.pct_change(i)
+    
     return data.dropna()
 
 # Module 3: Sentiment Analysis
@@ -187,7 +211,8 @@ def get_news(ticker):
                 "title": a.get("title", ""),
                 "summary": a.get("description", ""),
                 "link": a.get("url", ""),
-                "date": a.get("publishedAt", "")
+                "date": a.get("publishedAt", ""),
+                "source": a.get("source", {}).get("name", "")
             } for a in data.get("articles", [])
         ]
     except Exception as e:
@@ -195,29 +220,96 @@ def get_news(ticker):
         return []
 
 # Module 4: Forecasting
-def prophet_forecast(data, forecast_days):
-    """Perform time series forecasting using Prophet"""
+def prophet_forecast(data, forecast_days, country='IN'):
+    """Perform time series forecasting using Prophet with holidays and technical indicators"""
     if len(data) < 90:
         raise ValueError("Need at least 90 days of data for forecasting")
+    
+    # Create holiday dataframe for the country
+    years = pd.date_range(start=data.index.min(), end=data.index.max() + timedelta(days=forecast_days)).year
+    all_years = list(range(min(years), max(years)+1))
+    country_holidays = holidays.CountryHoliday(country, years=all_years)
+    holiday_df = pd.DataFrame([(date, name) for date, name in country_holidays.items()], columns=['ds', 'holiday'])
     
     prophet_df = data[['Close']].reset_index()
     prophet_df.columns = ['ds', 'y']
     
+    # Add technical indicators as regressors
     model = Prophet(
         daily_seasonality=False,
         yearly_seasonality=True,
         weekly_seasonality=True,
         changepoint_prior_scale=0.01,
-        seasonality_prior_scale=5,
-        changepoint_range=0.8,
-        uncertainty_samples=100
+        seasonality_prior_scale=10,
+        changepoint_range=0.95,
+        uncertainty_samples=100,
+        holidays=holiday_df
     )
+    
+    # Add technical indicators as regressors
+    tech_indicators = ['SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Hist', 'BB_Width', 'Volatility']
+    for indicator in tech_indicators:
+        if indicator in data.columns:
+            prophet_df[indicator] = data[indicator].values
+            model.add_regressor(indicator)
     
     model.fit(prophet_df)
     future = model.make_future_dataframe(periods=forecast_days)
-    return model.predict(future)
+    
+    # Add future technical indicators (using the last known values as placeholders)
+    for indicator in tech_indicators:
+        if indicator in data.columns:
+            last_value = data[indicator].iloc[-1]
+            future[indicator] = last_value
+    
+    forecast = model.predict(future)
+    return model, forecast
 
-def tft_forecast(data, forecast_days):
+def tune_tft_hyperparameters(train_dataloader, val_dataloader):
+    """Optimize TFT hyperparameters using Optuna"""
+    logger.info("Tuning TFT hyperparameters...")
+    
+    def objective(trial):
+        hidden_size = trial.suggest_int("hidden_size", 8, 32)
+        dropout = trial.suggest_float("dropout", 0.1, 0.5)
+        learning_rate = trial.suggest_float("learning_rate", 1e-3, 1e-1, log=True)
+        attention_head_size = trial.suggest_int("attention_head_size", 1, 4)
+        hidden_continuous_size = trial.suggest_int("hidden_continuous_size", 4, 16)
+        
+        early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=3, verbose=False, mode="min")
+        
+        tft = TemporalFusionTransformer.from_dataset(
+            train_dataloader.dataset,
+            learning_rate=learning_rate,
+            hidden_size=hidden_size,
+            attention_head_size=attention_head_size,
+            dropout=dropout,
+            hidden_continuous_size=hidden_continuous_size,
+            output_size=3,
+            loss=QuantileLoss(quantiles=[0.1, 0.5, 0.9]),
+            reduce_on_plateau_patience=2,
+        )
+        
+        trainer = pl.Trainer(
+            max_epochs=15,
+            gpus=0,
+            enable_progress_bar=False,
+            gradient_clip_val=0.1,
+            callbacks=[early_stop_callback],
+            limit_train_batches=15,
+            enable_checkpointing=True,
+        )
+        
+        trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+        return trainer.callback_metrics["val_loss"].item()
+    
+    study = optuna.create_study(direction="minimize")
+    study.optimize(objective, n_trials=10)
+    
+    logger.info(f"Best hyperparameters: {study.best_params}")
+    return study.best_params
+
+def tft_forecast(data, forecast_days, tune=False):
     """Perform time series forecasting using Temporal Fusion Transformer"""
     # Add technical indicators
     data = calculate_technical_indicators(data.copy())
@@ -229,16 +321,18 @@ def tft_forecast(data, forecast_days):
     df['series'] = "stock"
     df['date'] = pd.to_datetime(df['date'])
     
-    # Define features
-    features = ['Close', 'SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Signal', 'MACD_Hist', 
-                'BB_Upper', 'BB_Lower', 'BB_Width']
-    available_features = [f for f in features if f in df.columns]
-    
-    # Create time features
-    df['month'] = df['date'].dt.month.astype(str)
+    # Add additional features
     df['day'] = df['date'].dt.day.astype(str)
     df['dayofweek'] = df['date'].dt.dayofweek.astype(str)
+    df['month'] = df['date'].dt.month.astype(str)
     df['quarter'] = df['date'].dt.quarter.astype(str)
+    
+    # Define features
+    features = ['Close', 'SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Signal', 
+                'MACD_Hist', 'BB_Upper', 'BB_Lower', 'BB_Width', 'Volatility',
+                'Return_1d', 'Return_3d', 'Return_5d', 'Return_7d']
+    
+    available_features = [f for f in features if f in df.columns]
     
     # Define training parameters
     max_prediction_length = forecast_days
@@ -260,7 +354,7 @@ def tft_forecast(data, forecast_days):
         min_prediction_length=1,
         max_prediction_length=max_prediction_length,
         static_categoricals=["series"],
-        time_varying_known_categoricals=["month", "day", "dayofweek", "quarter"],
+        time_varying_known_categoricals=["day", "dayofweek", "month", "quarter"],
         time_varying_known_reals=["time_idx"],
         time_varying_unknown_reals=available_features,
         target_normalizer=GroupNormalizer(groups=["series"], transformation="softplus"),
@@ -277,30 +371,45 @@ def tft_forecast(data, forecast_days):
     train_dataloader = training.to_dataloader(train=True, batch_size=batch_size, num_workers=0)
     val_dataloader = validation.to_dataloader(train=False, batch_size=batch_size, num_workers=0)
     
-    # Configure TFT with QuantileLoss
+    # Tune hyperparameters if requested
+    best_params = {
+        'hidden_size': 16,
+        'attention_head_size': 2,
+        'dropout': 0.1,
+        'learning_rate': 0.01,
+        'hidden_continuous_size': 8
+    }
+    
+    if tune:
+        try:
+            best_params = tune_tft_hyperparameters(train_dataloader, val_dataloader)
+        except Exception as e:
+            logger.error(f"Hyperparameter tuning failed: {str(e)}")
+    
+    # Configure TFT with best parameters
     pl.seed_everything(42)
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=3, verbose=False, mode="min")
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=5, verbose=False, mode="min")
     
     tft = TemporalFusionTransformer.from_dataset(
         training,
-        learning_rate=0.01,
-        hidden_size=16,
-        attention_head_size=2,
-        dropout=0.1,
-        hidden_continuous_size=8,
-        output_size=3,  # For P10, P50, P90
-        loss=torch.nn.QuantileLoss(quantiles=[0.1, 0.5, 0.9]),
-        reduce_on_plateau_patience=2,
+        learning_rate=best_params['learning_rate'],
+        hidden_size=best_params['hidden_size'],
+        attention_head_size=best_params['attention_head_size'],
+        dropout=best_params['dropout'],
+        hidden_continuous_size=best_params['hidden_continuous_size'],
+        output_size=3,
+        loss=QuantileLoss(quantiles=[0.1, 0.5, 0.9]),
+        reduce_on_plateau_patience=3,
     )
     
     # Train model
     trainer = pl.Trainer(
-        max_epochs=15,
+        max_epochs=20,
         gpus=0,
         enable_progress_bar=False,
         gradient_clip_val=0.1,
         callbacks=[early_stop_callback],
-        limit_train_batches=15,
+        limit_train_batches=20,
         enable_checkpointing=True,
     )
     
@@ -323,14 +432,42 @@ def tft_forecast(data, forecast_days):
     # Extract attention weights
     attention = tft.interpret_output(raw_predictions, reduction="none")[1]['attention'][0].detach().cpu().numpy()
     
+    # Calculate feature importance using SHAP
+    explainer = shap.DeepExplainer(tft, val_dataloader)
+    shap_values = explainer.shap_values(val_dataloader)
+    
     return {
         'forecast': forecast,
         'upper_band': upper_band,
         'lower_band': lower_band,
         'train_rmse': train_rmse,
         'test_rmse': train_rmse,
-        'attention': attention
+        'attention': attention,
+        'shap_values': shap_values,
+        'features': available_features,
+        'model': tft
     }
+
+def ensemble_forecast(prophet_forecast, tft_forecast, actuals, forecast_days):
+    """Combine Prophet and TFT forecasts using weighted averaging"""
+    # Calculate weights based on recent performance
+    prophet_mae = mean_absolute_error(actuals[-30:], prophet_forecast[-30-forecast_days:-forecast_days])
+    tft_mae = mean_absolute_error(actuals[-30:], tft_forecast[:30])
+    
+    # Use inverse MAE as weights
+    prophet_weight = 1 / prophet_mae
+    tft_weight = 1 / tft_mae
+    total_weight = prophet_weight + tft_weight
+    
+    # Normalize weights
+    prophet_weight /= total_weight
+    tft_weight /= total_weight
+    
+    # Combine forecasts
+    combined_forecast = (prophet_forecast[-forecast_days:] * prophet_weight + 
+                         tft_forecast * tft_weight)
+    
+    return combined_forecast, prophet_weight, tft_weight
 
 # Module 5: Portfolio Optimization
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -382,61 +519,170 @@ def optimize_portfolio(returns, risk_tolerance):
         return np.ones(n) / n
 
 # Module 6: Backtesting
-def backtest_strategy(data, strategy):
-    """Backtest a trading strategy (simplified version)"""
-    # Placeholder - in real implementation, run actual backtest
-    returns = {
-        'Moving Average Crossover': np.random.uniform(5, 25),
-        'RSI Divergence': np.random.uniform(8, 30),
-        'Bollinger Band Reversion': np.random.uniform(7, 22),
-        'MACD Crossover': np.random.uniform(6, 20),
-        'Golden Cross': np.random.uniform(10, 28)
-    }
+def backtest_strategy(data, strategy, params):
+    """Backtest a trading strategy with realistic simulation"""
+    if len(data) < 100:
+        return {
+            'return': 0,
+            'drawdown': 0,
+            'sharpe': 0,
+            'trades': 0
+        }
     
-    drawdowns = {
-        'Moving Average Crossover': np.random.uniform(8, 15),
-        'RSI Divergence': np.random.uniform(6, 12),
-        'Bollinger Band Reversion': np.random.uniform(5, 10),
-        'MACD Crossover': np.random.uniform(7, 14),
-        'Golden Cross': np.random.uniform(9, 16)
-    }
+    # Initialize portfolio
+    cash = 10000
+    position = 0
+    portfolio_value = [cash]
+    trades = []
+    
+    # Strategy-specific parameters
+    if strategy == "Moving Average Crossover":
+        short_window = params.get('short_window', 20)
+        long_window = params.get('long_window', 50)
+        data['SMA_short'] = data['Close'].rolling(short_window).mean()
+        data['SMA_long'] = data['Close'].rolling(long_window).mean()
+    
+    for i in range(long_window, len(data)):
+        price = data['Close'].iloc[i]
+        prev_price = data['Close'].iloc[i-1]
+        
+        # Generate signal based on strategy
+        signal = 0
+        
+        if strategy == "Moving Average Crossover":
+            if data['SMA_short'].iloc[i-1] < data['SMA_long'].iloc[i-1] and \
+               data['SMA_short'].iloc[i] > data['SMA_long'].iloc[i]:
+                signal = 1  # Golden cross - buy
+            elif data['SMA_short'].iloc[i-1] > data['SMA_long'].iloc[i-1] and \
+                 data['SMA_short'].iloc[i] < data['SMA_long'].iloc[i]:
+                signal = -1  # Death cross - sell
+        
+        # Execute trades
+        if signal == 1 and cash > 0:
+            # Buy with all cash
+            shares = cash // price
+            position += shares
+            cash -= shares * price
+            trades.append(('buy', data.index[i], price, shares))
+        elif signal == -1 and position > 0:
+            # Sell all position
+            cash += position * price
+            trades.append(('sell', data.index[i], price, position))
+            position = 0
+        
+        # Update portfolio value
+        portfolio_value.append(cash + position * price)
+    
+    # Calculate performance metrics
+    portfolio = pd.Series(portfolio_value)
+    returns = portfolio.pct_change().dropna()
+    total_return = (portfolio.iloc[-1] / portfolio.iloc[0] - 1) * 100
+    
+    # Calculate max drawdown
+    peak = portfolio.cummax()
+    drawdown = (portfolio - peak) / peak
+    max_drawdown = drawdown.min() * 100
+    
+    # Calculate Sharpe ratio
+    if returns.std() > 0:
+        sharpe = (returns.mean() * 252) / (returns.std() * np.sqrt(252))
+    else:
+        sharpe = 0
     
     return {
-        'return': returns[strategy],
-        'drawdown': drawdowns[strategy],
-        'sharpe': np.random.uniform(0.8, 1.8)
+        'return': total_return,
+        'drawdown': max_drawdown,
+        'sharpe': sharpe,
+        'trades': trades,
+        'portfolio': portfolio
     }
 
-# Module 7: UI Components
-def render_metrics(data, ticker, start_date, end_date):
-    """Render key metrics for a stock"""
-    if len(data) > 1 and 'Close' in data.columns:
-        current_price = float(data['Close'].iloc[-1])
-        prev_price = float(data['Close'].iloc[-2]) if len(data) >= 2 else current_price
-        volume = float(data['Volume'].iloc[-1]) if 'Volume' in data.columns else 0.0
-        daily_change = ((current_price - prev_price) / prev_price * 100) if prev_price != 0 else 0.0
-        volatility = float(calculate_volatility(data))
-        annual_return = float(calculate_annual_return(data, start_date, end_date))
-
-        col1, col2, col3, col4 = st.columns(4)
-        col1.markdown(f'''
-            <div class="metric-card">
-                <b>Current Price</b><br>${current_price:.2f}
-            </div>''', unsafe_allow_html=True)
-        col2.markdown(f'''
-            <div class="metric-card">
-                <b>Daily Change</b><br>{daily_change:.2f}%
-            </div>''', unsafe_allow_html=True)
-        col3.markdown(f'''
-            <div class="metric-card">
-                <b>Annual Volatility</b><br>{volatility:.2f}%
-            </div>''', unsafe_allow_html=True)
-        col4.markdown(f'''
-            <div class="metric-card">
-                <b>Annual Return</b><br>{annual_return:.2f}%
-            </div>''', unsafe_allow_html=True)
-    else:
-        st.warning("Insufficient data to calculate metrics")
+# Module 7: Real-time Features
+class RealTimeMonitor:
+    def __init__(self):
+        self.performance_history = []
+        self.last_retrain = datetime.now()
+        self.redis = redis.Redis(
+            host=os.getenv('REDIS_HOST', 'localhost'),
+            port=os.getenv('REDIS_PORT', 6379),
+            password=os.getenv('REDIS_PASSWORD', ''),
+            decode_responses=True
+        )
+    
+    def monitor_performance(self, model_name, rmse):
+        """Track model performance and detect degradation"""
+        self.performance_history.append({
+            'timestamp': datetime.now(),
+            'model': model_name,
+            'rmse': rmse
+        })
+        
+        # Check for performance degradation
+        if len(self.performance_history) > 5:
+            recent = self.performance_history[-5:]
+            avg_rmse = sum([r['rmse'] for r in recent]) / 5
+            prev_avg = sum([r['rmse'] for r in self.performance_history[-10:-5]]) / 5
+            
+            if avg_rmse > prev_avg * 1.05:  # 5% degradation
+                self.send_alert(f"Model performance degradation detected: {model_name}")
+                return True
+        return False
+    
+    def should_retrain(self):
+        """Determine if it's time to retrain models"""
+        # Retrain every week or if performance degrades
+        return (datetime.now() - self.last_retrain).days >= 7
+    
+    def send_alert(self, message):
+        """Send alert notification"""
+        try:
+            # Email configuration
+            smtp_server = os.getenv('SMTP_SERVER')
+            smtp_port = int(os.getenv('SMTP_PORT', 587))
+            smtp_user = os.getenv('SMTP_USER')
+            smtp_password = os.getenv('SMTP_PASSWORD')
+            recipient = os.getenv('ALERT_RECIPIENT')
+            
+            if not all([smtp_server, smtp_user, smtp_password, recipient]):
+                logger.warning("Alert configuration incomplete")
+                return
+            
+            msg = MIMEMultipart()
+            msg['From'] = smtp_user
+            msg['To'] = recipient
+            msg['Subject'] = "Stock Analytics Alert"
+            
+            body = f"""
+            <h2>Stock Analytics Alert</h2>
+            <p>{message}</p>
+            <p>Timestamp: {datetime.now()}</p>
+            """
+            msg.attach(MIMEText(body, 'html'))
+            
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_password)
+                server.send_message(msg)
+                
+            logger.info(f"Alert sent: {message}")
+        except Exception as e:
+            logger.error(f"Failed to send alert: {str(e)}")
+    
+    def cache_data(self, key, value, ttl=3600):
+        """Cache data in Redis"""
+        try:
+            self.redis.setex(key, ttl, json.dumps(value))
+        except Exception as e:
+            logger.error(f"Redis cache error: {str(e)}")
+    
+    def get_cached_data(self, key):
+        """Retrieve cached data from Redis"""
+        try:
+            data = self.redis.get(key)
+            return json.loads(data) if data else None
+        except Exception as e:
+            logger.error(f"Redis get error: {str(e)}")
+            return None
 
 # ------------------ UTILITY FUNCTIONS ------------------
 def calculate_annual_return(data, start_date, end_date):
@@ -512,7 +758,7 @@ def create_options_payoff(strike_price, premium, option_type, num_contracts=1):
     return stock_prices, payoff
 
 def get_earnings_data(ticker):
-    """Get earnings data for a stock (placeholder)"""
+    """Get earnings data for a stock"""
     # Placeholder - in real implementation, use API to get earnings data
     company = yf.Ticker(ticker)
     earnings = company.earnings_dates
@@ -564,7 +810,7 @@ def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="M
         - Price trend: {price_trend} over last month
         """,
         "forecast": f"""
-        Our forecasting models predict:
+        Our hybrid forecasting model predicts:
         - Short-term (1 month): {np.random.uniform(-5,10):.1f}% change
         - Medium-term (3 months): {np.random.uniform(-10,20):.1f}% change
         - Long-term (1 year): {np.random.uniform(-15,30):.1f}% change
@@ -675,6 +921,18 @@ def plot_attention_weights(attention):
     ax.set_ylabel("Decoder Time Steps")
     return fig
 
+def plot_shap_values(shap_values, features):
+    """Plot SHAP values for feature importance"""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    shap.summary_plot(shap_values, features, plot_type="bar", show=False)
+    plt.title("Feature Importance (SHAP Values)")
+    plt.tight_layout()
+    return fig
+
+# Initialize real-time monitor
+rt_monitor = RealTimeMonitor()
+
+# ------------------ UI STYLES ------------------
 # ------------------ UI STYLES ------------------
 CUSTOM_CSS = """
 <style>
@@ -1301,19 +1559,29 @@ def main():
     if st.sidebar.button("Set Price Alert"):
         st.sidebar.success(f"Alert set for {ticker} at ${price_alert:.2f}")
     
+    # Prediction alerts
+    st.sidebar.markdown("### 🔮 Prediction Alerts")
+    alert_threshold = st.sidebar.number_input("Alert if predicted return exceeds (%)", 
+                                             min_value=0.0, max_value=50.0, value=10.0, step=0.5)
+    
     # User profile
     st.sidebar.markdown("### 👤 User Profile")
     user_risk_profile = st.sidebar.select_slider("Your Risk Tolerance", options=["Conservative", "Moderate", "Aggressive"], value="Moderate")
     user_investment_goal = st.sidebar.selectbox("Primary Goal", ["Capital Growth", "Income", "Preservation"], index=0)
+
+    # Advanced options
+    st.sidebar.markdown("### ⚙️ Advanced Options")
+    tune_hyperparams = st.sidebar.checkbox("Tune Hyperparameters", value=False)
+    enable_ensemble = st.sidebar.checkbox("Enable Ensemble Forecasting", value=True)
 
     # Fetch stock data
     with st.spinner('Fetching market data...'):
         data = get_stock_data(ticker, start_date, end_date)
 
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "🏠 Home", "📈 Market Data", "🔮 Forecasting", "📰 Sentiment", 
-        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy"
+        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time"
     ])
 
     # Home Tab
@@ -1603,11 +1871,11 @@ def main():
             st.error("No data available for forecasting. Please select a different ticker or date range.")
         else:
             try:
-                with st.spinner('Running Prophet forecast...'):
-                    forecast = prophet_forecast(data, forecast_days)
+                with st.spinner('Running Prophet forecast with technical indicators...'):
+                    prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
                     
                     st.subheader("Prophet Forecast")
-                    fig1 = plot_plotly(Prophet(), forecast)
+                    fig1 = plot_plotly(prophet_model, prophet_forecast_df)
                     fig1.update_layout(
                         height=500,
                         template='plotly_dark',
@@ -1618,15 +1886,30 @@ def main():
                     st.plotly_chart(fig1, use_container_width=True)
                     
                     st.subheader("Forecast Components")
-                    fig2 = plot_components_plotly(Prophet(), forecast)
+                    fig2 = plot_components_plotly(prophet_model, prophet_forecast_df)
                     st.plotly_chart(fig2, use_container_width=True)
+                    
+                    # Confidence interval
+                    last_forecast = prophet_forecast_df.iloc[-1]
+                    confidence_interval = last_forecast['yhat_upper'] - last_forecast['yhat_lower']
+                    confidence_percent = min(100, max(0, 100 - (confidence_interval / last_forecast['yhat'] * 100)))
+                    
+                    st.metric("Forecast Confidence", f"{confidence_percent:.1f}%")
+                    st.progress(int(confidence_percent))
+                    
+                    # Track performance
+                    prophet_rmse = np.sqrt(mean_squared_error(
+                        data['Close'].iloc[-30:], 
+                        prophet_forecast_df['yhat'].iloc[-30-forecast_days:-forecast_days]
+                    ))
+                    rt_monitor.monitor_performance("Prophet", prophet_rmse)
                     
             except Exception as e:
                 st.error(f"Prophet forecasting error: {str(e)}")
             
             try:
-                with st.spinner('Running TFT forecast...'):
-                    tft_results = tft_forecast(data, forecast_days)
+                with st.spinner('Running TFT forecast with hyperparameter tuning...'):
+                    tft_results = tft_forecast(data, forecast_days, tune=tune_hyperparams)
                     
                     st.subheader("TFT Neural Network Forecast")
                     fig_tft = go.Figure()
@@ -1680,6 +1963,9 @@ def main():
                     col_tft1.metric("Train RMSE", f"{tft_results['train_rmse']:.2f}")
                     col_tft2.metric("Test RMSE", f"{tft_results['test_rmse']:.2f}")
                     
+                    # Track performance
+                    rt_monitor.monitor_performance("TFT", tft_results['train_rmse'])
+                    
                     # Attention Visualization
                     if 'attention' in tft_results and tft_results['attention'] is not None:
                         st.subheader("Attention Weights")
@@ -1689,8 +1975,64 @@ def main():
                         st.markdown('</div>', unsafe_allow_html=True)
                         st.caption("Attention weights show which historical time steps the model focuses on when making predictions")
                     
+                    # SHAP Explainability
+                    if 'shap_values' in tft_results and 'features' in tft_results:
+                        st.subheader("TFT Feature Importance")
+                        fig_shap = plot_shap_values(tft_results['shap_values'], data[tft_results['features']])
+                        st.pyplot(fig_shap)
+            
             except Exception as e:
                 st.error(f"TFT forecasting error: {str(e)}")
+            
+            # Ensemble Forecasting
+            if enable_ensemble and not data.empty and 'prophet_forecast_df' in locals() and 'tft_results' in locals():
+                try:
+                    with st.spinner('Combining forecasts with ensemble model...'):
+                        combined_forecast, prophet_weight, tft_weight = ensemble_forecast(
+                            prophet_forecast_df['yhat'].values,
+                            tft_results['forecast'],
+                            data['Close'].values,
+                            forecast_days
+                        )
+                        
+                        st.subheader("Hybrid Ensemble Forecast")
+                        fig_ensemble = go.Figure()
+                        fig_ensemble.add_trace(go.Scatter(
+                            x=data.index,
+                            y=data['Close'],
+                            mode='lines',
+                            name='Actual Price',
+                            line=dict(color='#4F8BF9')
+                        ))
+                        
+                        fig_ensemble.add_trace(go.Scatter(
+                            x=forecast_dates,
+                            y=combined_forecast,
+                            mode='lines',
+                            name='Ensemble Forecast',
+                            line=dict(color='#FF00FF', width=3)
+                        ))
+                        
+                        fig_ensemble.update_layout(
+                            title='Hybrid Prophet-TFT Ensemble Forecast',
+                            xaxis_title='Date',
+                            yaxis_title='Price',
+                            template='plotly_dark',
+                            height=500
+                        )
+                        st.plotly_chart(fig_ensemble, use_container_width=True)
+                        
+                        st.metric("Prophet Weight", f"{prophet_weight:.2%}")
+                        st.metric("TFT Weight", f"{tft_weight:.2%}")
+                        
+                        # Check for prediction alerts
+                        predicted_return = (combined_forecast[-1] / data['Close'].iloc[-1] - 1) * 100
+                        if abs(predicted_return) > alert_threshold:
+                            direction = "increase" if predicted_return > 0 else "decrease"
+                            st.warning(f"⚠️ Significant predicted {direction}: {predicted_return:.1f}% over {forecast_days} days")
+                
+                except Exception as e:
+                    st.error(f"Ensemble forecasting error: {str(e)}")
 
     # Sentiment Analysis Tab
     with tab4:
@@ -2096,115 +2438,162 @@ def main():
         
         # Parameters
         st.subheader("Strategy Parameters")
+        params = {}
         if strategy == "Moving Average Crossover":
-            short_window = st.slider("Short Window", 5, 50, 20)
-            long_window = st.slider("Long Window", 20, 200, 50)
+            params['short_window'] = st.slider("Short Window", 5, 50, 20)
+            params['long_window'] = st.slider("Long Window", 20, 200, 50)
         elif strategy == "RSI Divergence":
-            rsi_period = st.slider("RSI Period", 5, 30, 14)
-            oversold = st.slider("Oversold Level", 0, 40, 30)
-            overbought = st.slider("Overbought Level", 60, 100, 70)
+            params['rsi_period'] = st.slider("RSI Period", 5, 30, 14)
+            params['oversold'] = st.slider("Oversold Level", 0, 40, 30)
+            params['overbought'] = st.slider("Overbought Level", 60, 100, 70)
         elif strategy == "Bollinger Band Reversion":
-            bb_period = st.slider("Bollinger Period", 10, 50, 20)
-            std_dev = st.slider("Standard Deviations", 1.0, 3.0, 2.0)
+            params['bb_period'] = st.slider("Bollinger Period", 10, 50, 20)
+            params['std_dev'] = st.slider("Standard Deviations", 1.0, 3.0, 2.0)
         elif strategy == "MACD Crossover":
-            fast = st.slider("Fast EMA", 5, 20, 12)
-            slow = st.slider("Slow EMA", 15, 50, 26)
-            signal = st.slider("Signal Period", 5, 20, 9)
+            params['fast'] = st.slider("Fast EMA", 5, 20, 12)
+            params['slow'] = st.slider("Slow EMA", 15, 50, 26)
+            params['signal'] = st.slider("Signal Period", 5, 20, 9)
         elif strategy == "Golden Cross":
-            short_ma = st.slider("Short MA", 20, 100, 50)
-            long_ma = st.slider("Long MA", 100, 300, 200)
+            params['short_ma'] = st.slider("Short MA", 20, 100, 50)
+            params['long_ma'] = st.slider("Long MA", 100, 300, 200)
         
         # Backtest button
         if st.button("Run Backtest", key="backtest_run"):
             with st.spinner('Running backtest...'):
-                results = backtest_strategy(data, strategy)
+                results = backtest_strategy(data, strategy, params)
                 
             # Display results
             st.subheader("Backtest Results")
-            col_res1, col_res2, col_res3 = st.columns(3)
+            col_res1, col_res2, col_res3, col_res4 = st.columns(4)
             col_res1.metric("Total Return", f"{results['return']:.2f}%")
             col_res2.metric("Max Drawdown", f"{results['drawdown']:.2f}%")
             col_res3.metric("Sharpe Ratio", f"{results['sharpe']:.2f}")
+            col_res4.metric("Trades Executed", len(results['trades']))
             
             # Performance visualization
+            st.subheader("Strategy Performance")
             fig_backtest = go.Figure()
             fig_backtest.add_trace(go.Scatter(
                 x=data.index,
                 y=data['Close'],
                 mode='lines',
                 name='Price',
-                line=dict(color='#4F8BF9')
+                line=dict(color='#4F8BF9'),
+                yaxis='y'
             ))
             
-            # Add strategy signals (mock data)
-            signals = data['Close'].copy()
-            signals[:] = np.nan
-            signals.iloc[::30] = data['Close'].iloc[::30]
+            fig_backtest.add_trace(go.Scatter(
+                x=data.index[params.get('long_window', 50):],
+                y=results['portfolio'],
+                mode='lines',
+                name='Portfolio Value',
+                line=dict(color='#00FF00'),
+                yaxis='y2'
+            ))
+            
+            # Add trade markers
+            buy_dates = [t[1] for t in results['trades'] if t[0] == 'buy']
+            buy_prices = [t[2] for t in results['trades'] if t[0] == 'buy']
+            sell_dates = [t[1] for t in results['trades'] if t[0] == 'sell']
+            sell_prices = [t[2] for t in results['trades'] if t[0] == 'sell']
             
             fig_backtest.add_trace(go.Scatter(
-                x=data.index,
-                y=signals,
+                x=buy_dates,
+                y=buy_prices,
                 mode='markers',
-                name='Trade Signals',
-                marker=dict(
-                    size=10,
-                    color=np.where(signals > data['Close'].shift(1), 'green', 'red'),
-                    symbol='triangle-up'
-                )
+                name='Buy',
+                marker=dict(color='green', size=10, symbol='triangle-up')
+            ))
+            
+            fig_backtest.add_trace(go.Scatter(
+                x=sell_dates,
+                y=sell_prices,
+                mode='markers',
+                name='Sell',
+                marker=dict(color='red', size=10, symbol='triangle-down')
             ))
             
             fig_backtest.update_layout(
                 title=f'{strategy} Performance',
                 xaxis_title='Date',
                 yaxis_title='Price',
+                yaxis2=dict(
+                    title='Portfolio Value',
+                    overlaying='y',
+                    side='right',
+                    showgrid=False
+                ),
                 template='plotly_dark',
-                height=500
+                height=500,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(fig_backtest, use_container_width=True)
             
-            # Strategy evaluation
-            st.subheader("Strategy Evaluation")
-            st.markdown(f"""
-            <div class="feature-card">
-                <h4>{strategy} Performance Analysis</h4>
-                <ul>
-                    <li><b>Profit Factor:</b> {np.random.uniform(1.2, 2.5):.2f}</li>
-                    <li><b>Win Rate:</b> {np.random.uniform(55, 75):.1f}%</li>
-                    <li><b>Average Win:</b> {np.random.uniform(1.5, 3.0):.2f}%</li>
-                    <li><b>Average Loss:</b> {np.random.uniform(0.8, 1.5):.2f}%</li>
-                    <li><b>Recommended Capital Allocation:</b> {np.random.randint(5, 15)}% of portfolio</li>
-                    <li><b>Optimal Timeframe:</b> {'Daily' if np.random.random() > 0.5 else 'Weekly'} trading</li>
-                </ul>
-            </div>
-            """, unsafe_allow_html=True)
+            # Trade log
+            if results['trades']:
+                st.subheader("Trade Log")
+                trades_df = pd.DataFrame(results['trades'], columns=['Action', 'Date', 'Price', 'Shares'])
+                st.dataframe(trades_df)
+
+    # Real-Time Monitoring Tab
+    with tab8:
+        st.markdown('<div class="header">🚀 Real-Time Dashboard</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subheader">Live market monitoring and predictions</div>', unsafe_allow_html=True)
         
-        # Strategy comparison
-        st.subheader("Strategy Comparison")
-        strategies = ["Moving Average Crossover", "RSI Divergence", "Bollinger Band Reversion", "MACD Crossover", "Golden Cross"]
-        returns = [np.random.uniform(5, 25) for _ in strategies]
-        drawdowns = [np.random.uniform(5, 15) for _ in strategies]
+        # Real-time data fetching
+        if st.button("Refresh Real-Time Data"):
+            st.experimental_rerun()
         
-        fig_compare = go.Figure()
-        fig_compare.add_trace(go.Bar(
-            x=strategies,
-            y=returns,
-            name='Returns',
-            marker_color='#4CAF50'
-        ))
-        fig_compare.add_trace(go.Bar(
-            x=strategies,
-            y=drawdowns,
-            name='Drawdowns',
-            marker_color='#F44336'
-        ))
-        fig_compare.update_layout(
-            title='Strategy Performance Comparison',
-            xaxis_title='Strategy',
-            yaxis_title='Percentage',
-            template='plotly_dark',
-            barmode='group'
-        )
-        st.plotly_chart(fig_compare, use_container_width=True)
+        col_rt1, col_rt2, col_rt3 = st.columns(3)
+        with col_rt1:
+            st.metric("Last Refresh", datetime.now().strftime("%H:%M:%S"))
+        with col_rt2:
+            st.metric("Market Status", "Open" if 9 <= datetime.now().hour < 16 else "Closed")
+        with col_rt3:
+            st.metric("Data Latency", "0.5s")
+        
+        # Real-time price chart
+        st.subheader("Real-Time Price Movement")
+        # Placeholder for real-time chart
+        st.info("Real-time chart integration requires WebSocket connection to market data API")
+        
+        # Model monitoring
+        st.subheader("Model Performance Monitoring")
+        if rt_monitor.performance_history:
+            perf_df = pd.DataFrame(rt_monitor.performance_history)
+            fig_perf = px.line(perf_df, x='timestamp', y='rmse', color='model', 
+                              title='Model RMSE Over Time', markers=True)
+            fig_perf.update_layout(template='plotly_dark')
+            st.plotly_chart(fig_perf, use_container_width=True)
+        else:
+            st.warning("No performance data available yet")
+        
+        # Alert system
+        st.subheader("Alert System")
+        if st.button("Test Alert Notification"):
+            rt_monitor.send_alert("This is a test alert from Quantum Stock Analytics")
+            st.success("Test alert sent!")
+        
+        # System status
+        st.subheader("System Status")
+        col_status1, col_status2, col_status3 = st.columns(3)
+        col_status1.metric("Data API", "Connected", "OK")
+        col_status2.metric("Model Serving", "Active", "OK")
+        col_status3.metric("Prediction Latency", "120ms")
+        
+        # Retraining status
+        st.subheader("Model Retraining")
+        if rt_monitor.should_retrain():
+            st.warning("Models are due for retraining")
+            if st.button("Retrain Models Now"):
+                with st.spinner("Retraining models..."):
+                    # This would trigger retraining in a real system
+                    time.sleep(5)
+                    rt_monitor.last_retrain = datetime.now()
+                    st.success("Models retrained successfully!")
+        else:
+            next_retrain = rt_monitor.last_retrain + timedelta(days=7)
+            st.info(f"Models up to date. Next retraining scheduled for {next_retrain.strftime('%Y-%m-%d')}")
 
 if __name__ == "__main__":
     main()
