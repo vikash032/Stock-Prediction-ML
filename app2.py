@@ -454,20 +454,10 @@ def tft_forecast(data, forecast_days, tune=False):
         'model': tft
     }
 
-def ensemble_forecast(prophet_forecast, tft_forecast, actuals, forecast_days):
+def ensemble_forecast(prophet_forecast, tft_forecast, actuals, forecast_days, weights=(0.6, 0.4)):
     """Combine Prophet and TFT forecasts using weighted averaging"""
-    # Calculate weights based on recent performance
-    prophet_mae = mean_absolute_error(actuals[-30:], prophet_forecast[-30-forecast_days:-forecast_days])
-    tft_mae = mean_absolute_error(actuals[-30:], tft_forecast[:30])
-    
-    # Use inverse MAE as weights
-    prophet_weight = 1 / prophet_mae
-    tft_weight = 1 / tft_mae
-    total_weight = prophet_weight + tft_weight
-    
-    # Normalize weights
-    prophet_weight /= total_weight
-    tft_weight /= total_weight
+    # Unpack weights
+    prophet_weight, tft_weight = weights
     
     # Combine forecasts
     combined_forecast = (prophet_forecast[-forecast_days:] * prophet_weight + 
@@ -764,7 +754,7 @@ def create_options_payoff(strike_price, premium, option_type, num_contracts=1):
     return stock_prices, payoff
 
 def get_earnings_data(ticker):
-    """Get earnings data for a stock with realistic dates"""
+    """Get earnings data for a stock with realistic dates for Indian exchanges"""
     try:
         # Try to get real earnings data
         company = yf.Ticker(ticker)
@@ -774,10 +764,18 @@ def get_earnings_data(ticker):
             earnings = earnings.dropna()
             earnings['Surprise (%)'] = ((earnings['Reported EPS'] - earnings['EPS Estimate']) / 
                                        earnings['EPS Estimate'].abs()) * 100
+            
+            # Ensure consistent EPS type (use diluted if available)
+            if 'Diluted EPS' in earnings.columns:
+                earnings['Reported EPS'] = earnings['Diluted EPS']
+                st.session_state.eps_type = "Diluted"
+            else:
+                st.session_state.eps_type = "Basic"
+            
             # Ensure we have recent data
             if earnings.index.max() < pd.Timestamp('2025-01-01'):
-                # Generate mock data for 2025
-                dates = pd.date_range(start='2025-01-01', periods=4, freq='Q')
+                # Generate mock data for 2025 with Indian fiscal calendar
+                dates = self.get_indian_fiscal_dates(2025)
                 mock_earnings = pd.DataFrame({
                     'Earnings Date': dates,
                     'EPS Estimate': np.random.uniform(0.5, 2.5, 4),
@@ -791,8 +789,8 @@ def get_earnings_data(ticker):
     except:
         pass
     
-    # Create mock data for 2024-2025
-    dates = pd.date_range(start='2024-01-01', periods=8, freq='Q')
+    # Create mock data for 2024-2025 with Indian fiscal calendar
+    dates = self.get_indian_fiscal_dates(2024) + self.get_indian_fiscal_dates(2025)
     earnings = pd.DataFrame({
         'Earnings Date': dates,
         'EPS Estimate': np.random.uniform(0.5, 2.5, 8),
@@ -800,7 +798,23 @@ def get_earnings_data(ticker):
         'Surprise (%)': np.random.uniform(-15, 15, 8)
     })
     earnings.set_index('Earnings Date', inplace=True)
+    st.session_state.eps_type = "Basic (Simulated)"
     return earnings.tail(4)
+
+def get_indian_fiscal_dates(year):
+    """Generate earnings dates based on Indian fiscal calendar"""
+    # Indian fiscal year: April to March
+    # Typical reporting schedule: 
+    #   Q1: July (Apr-Jun quarter)
+    #   Q2: October (Jul-Sep)
+    #   Q3: January (Oct-Dec)
+    #   Q4: April (Jan-Mar)
+    return [
+        pd.Timestamp(f'{year}-07-15'),
+        pd.Timestamp(f'{year}-10-15'),
+        pd.Timestamp(f'{year+1}-01-15'),
+        pd.Timestamp(f'{year+1}-04-15')
+    ]
 
 def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="Moderate", investment_goal="Growth"):
     """Generate AI-powered response to investment questions"""
@@ -911,9 +925,9 @@ def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="M
         return responses["default"]
 
 def get_macro_data():
-    """Get macroeconomic data for India with realistic values"""
+    """Get macroeconomic data for India with realistic values and sanity checks"""
     # Placeholder - in real implementation, use API
-    return {
+    macro_data = {
         'inflation': 4.5,
         'interest_rate': 6.5,
         'unemployment': 7.2,
@@ -921,8 +935,19 @@ def get_macro_data():
         'consumer_sentiment': 68.4,
         'manufacturing_pmi': 55.7,
         'source': 'RBI / MOSPI',
-        'last_updated': datetime.now().strftime('%Y-%m-%d')
+        'last_updated': datetime.now().strftime('%Y-%m-%d'),
+        'warnings': []
     }
+    
+    # Sanity checks
+    if macro_data['inflation'] > 10:
+        macro_data['warnings'].append(f"Inflation rate {macro_data['inflation']}% is high (>10%)")
+    if macro_data['manufacturing_pmi'] < 40:
+        macro_data['warnings'].append(f"PMI {macro_data['manufacturing_pmi']} is low (<40)")
+    if macro_data['unemployment'] > 10:
+        macro_data['warnings'].append(f"Unemployment {macro_data['unemployment']}% is high (>10%)")
+    
+    return macro_data
 
 def get_institutional_activity(ticker):
     """Get institutional activity data (placeholder)"""
@@ -986,7 +1011,6 @@ def render_metrics(data, ticker, start_date, end_date):
 # Initialize real-time monitor
 rt_monitor = RealTimeMonitor()
 
-# ------------------ UI STYLES ------------------
 # ------------------ UI STYLES ------------------
 CUSTOM_CSS = """
 <style>
@@ -1560,6 +1584,25 @@ CUSTOM_CSS = """
         margin: 20px 0;
         box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
     }
+    
+    /* Warning badge */
+    .warning-badge {
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        background: var(--danger);
+        color: white;
+        border-radius: 50%;
+        width: 25px;
+        height: 25px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 0.8rem;
+        z-index: 2;
+        animation: pulse 1.5s infinite;
+    }
 </style>
 """
 
@@ -1595,6 +1638,15 @@ def main():
     risk_tolerance = st.sidebar.slider("⚠️ Risk Tolerance (1=Low, 10=High)", 1, 10, 5)
     portfolio_size = st.sidebar.number_input("💰 Portfolio Size ($)", 10000, 1000000, 50000)
     portfolio_tickers = st.sidebar.multiselect("📊 Select Portfolio Stocks", default_tickers, default=default_tickers[:5])
+    
+    # Hybrid forecast configuration
+    st.sidebar.markdown("### 🔮 Hybrid Forecast")
+    prophet_weight = st.sidebar.slider("Prophet Weight", 0.0, 1.0, 0.6)
+    tft_weight = st.sidebar.slider("TFT Weight", 0.0, 1.0, 0.4)
+    # Normalize weights to sum to 1
+    total_weight = prophet_weight + tft_weight
+    prophet_weight /= total_weight
+    tft_weight /= total_weight
     
     # Market sentiment gauge
     st.sidebar.markdown("### 📈 Market Sentiment")
@@ -1819,27 +1871,35 @@ def main():
                 
                 # Price and MACD
                 fig_tech.add_trace(go.Scatter(
-                    x=data.index, y=data['Close'],
-                    mode='lines', name='Close',
+                    x=data.index,
+                    y=data['Close'],
+                    mode='lines',
+                    name='Close',
                     line=dict(color='#4F8BF9')
                 ))
                 
                 fig_tech.add_trace(go.Scatter(
-                    x=data.index, y=data['MACD'],
-                    mode='lines', name='MACD',
+                    x=data.index,
+                    y=data['MACD'],
+                    mode='lines',
+                    name='MACD',
                     line=dict(color='#FFA500')
                 ))
                 
                 fig_tech.add_trace(go.Scatter(
-                    x=data.index, y=data['MACD_Signal'],
-                    mode='lines', name='Signal',
+                    x=data.index,
+                    y=data['MACD_Signal'],
+                    mode='lines',
+                    name='Signal',
                     line=dict(color='#00FF00')
                 ))
                 
                 # RSI on secondary axis
                 fig_tech.add_trace(go.Scatter(
-                    x=data.index, y=data['RSI'],
-                    mode='lines', name='RSI',
+                    x=data.index,
+                    y=data['RSI'],
+                    mode='lines',
+                    name='RSI',
                     line=dict(color='#FF00FF'),
                     yaxis='y2'
                 ))
@@ -1924,6 +1984,7 @@ def main():
         if data.empty:
             st.error("No data available for forecasting. Please select a different ticker or date range.")
         else:
+            # Prophet Forecast
             try:
                 with st.spinner('Running Prophet forecast with technical indicators...'):
                     prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
@@ -1961,8 +2022,14 @@ def main():
             except Exception as e:
                 st.error(f"Prophet forecasting error: {str(e)}")
             
+            # TFT Forecast
+            tft_results = None
             try:
                 with st.spinner('Running TFT forecast with hyperparameter tuning...'):
+                    # Check if we have enough data for TFT
+                    if len(data) < 60:
+                        raise ValueError("Insufficient data for TFT forecasting. Need at least 60 days of data.")
+                    
                     tft_results = tft_forecast(data, forecast_days, tune=tune_hyperparams)
                     
                     st.subheader("TFT Neural Network Forecast")
@@ -2039,14 +2106,15 @@ def main():
                 st.error(f"TFT forecasting error: {str(e)}")
             
             # Ensemble Forecasting
-            if enable_ensemble and not data.empty and 'prophet_forecast_df' in locals() and 'tft_results' in locals():
+            if enable_ensemble and not data.empty and 'prophet_forecast_df' in locals() and tft_results is not None:
                 try:
                     with st.spinner('Combining forecasts with ensemble model...'):
-                        combined_forecast, prophet_weight, tft_weight = ensemble_forecast(
+                        combined_forecast, p_weight, t_weight = ensemble_forecast(
                             prophet_forecast_df['yhat'].values,
                             tft_results['forecast'],
                             data['Close'].values,
-                            forecast_days
+                            forecast_days,
+                            weights=(prophet_weight, tft_weight)
                         )
                         
                         st.subheader("Hybrid Ensemble Forecast")
@@ -2059,11 +2127,30 @@ def main():
                             line=dict(color='#4F8BF9')
                         ))
                         
+                        # Prophet forecast
+                        fig_ensemble.add_trace(go.Scatter(
+                            x=prophet_forecast_df['ds'],
+                            y=prophet_forecast_df['yhat'],
+                            mode='lines',
+                            name='Prophet Forecast',
+                            line=dict(color='#FFA500', dash='dot')
+                        ))
+                        
+                        # TFT forecast
+                        fig_ensemble.add_trace(go.Scatter(
+                            x=forecast_dates,
+                            y=tft_results['forecast'],
+                            mode='lines',
+                            name='TFT Forecast',
+                            line=dict(color='#00FF00', dash='dot')
+                        ))
+                        
+                        # Combined forecast
                         fig_ensemble.add_trace(go.Scatter(
                             x=forecast_dates,
                             y=combined_forecast,
                             mode='lines',
-                            name='Ensemble Forecast',
+                            name='Hybrid Forecast',
                             line=dict(color='#FF00FF', width=3)
                         ))
                         
@@ -2077,8 +2164,8 @@ def main():
                         st.plotly_chart(fig_ensemble, use_container_width=True)
                         
                         col_ens1, col_ens2 = st.columns(2)
-                        col_ens1.metric("Prophet Weight", f"{prophet_weight:.2%}")
-                        col_ens2.metric("TFT Weight", f"{tft_weight:.2%}")
+                        col_ens1.metric("Prophet Weight", f"{p_weight:.2%}")
+                        col_ens2.metric("TFT Weight", f"{t_weight:.2%}")
                         
                         # Check for prediction alerts
                         predicted_return = (combined_forecast[-1] / data['Close'].iloc[-1] - 1) * 100
@@ -2190,6 +2277,10 @@ def main():
                     col_earn2.metric("Estimate", f"{last_earnings['EPS Estimate']:.2f}")
                     col_earn3.metric("Surprise", f"{last_earnings['Surprise (%)']:.2f}%", 
                                     delta=f"{last_earnings['Surprise (%)']:.2f}%")
+                    
+                    # Show EPS type
+                    eps_type = getattr(st.session_state, 'eps_type', 'Basic')
+                    st.caption(f"Note: Using {eps_type} EPS for calculations")
                     
                     # Earnings Forecast
                     st.markdown("#### Next Earnings Forecast")
@@ -2388,62 +2479,81 @@ def main():
             macro_data = get_macro_data()
             
             col_m1, col_m2, col_m3, col_m4, col_m5, col_m6 = st.columns(6)
-            col_m1.markdown(f"""
-                <div class="macro-metric">
-                    <h5>Inflation</h5>
-                    <h3>{macro_data['inflation']}%</h3>
-                    <small>Source: {macro_data['source']}</small>
-                    <small>Updated: {macro_data['last_updated']}</small>
-                </div>
-            """, unsafe_allow_html=True)
-            col_m2.markdown(f"""
-                <div class="macro-metric">
-                    <h5>Interest Rate</h5>
-                    <h3>{macro_data['interest_rate']}%</h3>
-                    <small>Source: {macro_data['source']}</small>
-                    <small>Updated: {macro_data['last_updated']}</small>
-                </div>
-            """, unsafe_allow_html=True)
-            col_m3.markdown(f"""
-                <div class="macro-metric">
-                    <h5>Unemployment</h5>
-                    <h3>{macro_data['unemployment']}%</h3>
-                    <small>Source: {macro_data['source']}</small>
-                    <small>Updated: {macro_data['last_updated']}</small>
-                </div>
-            """, unsafe_allow_html=True)
-            col_m4.markdown(f"""
-                <div class="macro-metric">
-                    <h5>GDP Growth</h5>
-                    <h3>{macro_data['gdp_growth']}%</h3>
-                    <small>Source: {macro_data['source']}</small>
-                    <small>Updated: {macro_data['last_updated']}</small>
-                </div>
-            """, unsafe_allow_html=True)
-            col_m5.markdown(f"""
-                <div class="macro-metric">
-                    <h5>Consumer Sentiment</h5>
-                    <h3>{macro_data['consumer_sentiment']}</h3>
-                    <small>Source: {macro_data['source']}</small>
-                    <small>Updated: {macro_data['last_updated']}</small>
-                </div>
-            """, unsafe_allow_html=True)
-            col_m6.markdown(f"""
-                <div class="macro-metric">
-                    <h5>Manufacturing PMI</h5>
-                    <h3>{macro_data['manufacturing_pmi']}</h3>
-                    <small>Source: {macro_data['source']}</small>
-                    <small>Updated: {macro_data['last_updated']}</small>
-                </div>
-            """, unsafe_allow_html=True)
+            with col_m1:
+                warning = ""
+                if macro_data['inflation'] > 10:
+                    warning = '<div class="warning-badge">!</div>'
+                st.markdown(f"""
+                    <div class="macro-metric">
+                        {warning}
+                        <h5>Inflation</h5>
+                        <h3>{macro_data['inflation']}%</h3>
+                        <small>Source: {macro_data['source']}</small>
+                        <small>Updated: {macro_data['last_updated']}</small>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+            with col_m2:
+                st.markdown(f"""
+                    <div class="macro-metric">
+                        <h5>Interest Rate</h5>
+                        <h3>{macro_data['interest_rate']}%</h3>
+                        <small>Source: {macro_data['source']}</small>
+                        <small>Updated: {macro_data['last_updated']}</small>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+            with col_m3:
+                warning = ""
+                if macro_data['unemployment'] > 10:
+                    warning = '<div class="warning-badge">!</div>'
+                st.markdown(f"""
+                    <div class="macro-metric">
+                        {warning}
+                        <h5>Unemployment</h5>
+                        <h3>{macro_data['unemployment']}%</h3>
+                        <small>Source: {macro_data['source']}</small>
+                        <small>Updated: {macro_data['last_updated']}</small>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+            with col_m4:
+                st.markdown(f"""
+                    <div class="macro-metric">
+                        <h5>GDP Growth</h5>
+                        <h3>{macro_data['gdp_growth']}%</h3>
+                        <small>Source: {macro_data['source']}</small>
+                        <small>Updated: {macro_data['last_updated']}</small>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+            with col_m5:
+                st.markdown(f"""
+                    <div class="macro-metric">
+                        <h5>Consumer Sentiment</h5>
+                        <h3>{macro_data['consumer_sentiment']}</h3>
+                        <small>Source: {macro_data['source']}</small>
+                        <small>Updated: {macro_data['last_updated']}</small>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+            with col_m6:
+                warning = ""
+                if macro_data['manufacturing_pmi'] < 40:
+                    warning = '<div class="warning-badge">!</div>'
+                st.markdown(f"""
+                    <div class="macro-metric">
+                        {warning}
+                        <h5>Manufacturing PMI</h5>
+                        <h3>{macro_data['manufacturing_pmi']}</h3>
+                        <small>Source: {macro_data['source']}</small>
+                        <small>Updated: {macro_data['last_updated']}</small>
+                    </div>
+                """, unsafe_allow_html=True)
             
-            # Data validation warnings
-            if macro_data['inflation'] > 10:
-                st.warning("High inflation rate detected - may impact portfolio performance")
-            if macro_data['unemployment'] > 10:
-                st.warning("High unemployment rate detected - may indicate economic slowdown")
-            if macro_data['consumer_sentiment'] < 50:
-                st.warning("Low consumer sentiment - may impact consumer stocks")
+            # Macroeconomic warnings
+            if macro_data['warnings']:
+                st.warning(f"**Macroeconomic warnings:** {'; '.join(macro_data['warnings'])}")
             
             st.markdown(f"""
             <div class="feature-card">
