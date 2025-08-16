@@ -1868,7 +1868,7 @@ def main():
             )
             st.plotly_chart(fig, use_container_width=True)
             
-            # Return comparison
+            # Return comparison                        
             st.subheader("Return Comparison")
             return_comparison = []
             for t in portfolio_data.columns:
@@ -1877,12 +1877,18 @@ def main():
                     'Expected Return': expected_returns.get(t, 0),
                     'Actual Return': actual_returns.get(t, 0)
                 })
-            
+        
             return_df = pd.DataFrame(return_comparison)
-            st.dataframe(return_df.style.format({
-                'Expected Return': '{:.2f}%',
-                'Actual Return': '{:.2f}%'
-            }))
+        
+            # Format the return columns as strings
+            return_df['Expected Return'] = return_df['Expected Return'].apply(
+               lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
+            )
+            return_df['Actual Return'] = return_df['Actual Return'].apply(
+                lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
+            )
+        
+            st.dataframe(return_df)
             
             # Correlation heatmap
             st.subheader("Stock Correlation Matrix")
