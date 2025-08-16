@@ -21,3 +21,4 @@ optuna
 redis
 schedule
 mlflow
+faiss
