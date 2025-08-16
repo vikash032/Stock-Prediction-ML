@@ -15,7 +15,7 @@ from streamlit_autorefresh import st_autorefresh
 import requests
 import os
 import re
-import ta  # Technical analysis library
+import ta
 import warnings
 from sklearn.metrics import mean_squared_error
 from keras.models import Sequential
@@ -30,6 +30,16 @@ from pytorch_lightning.callbacks import EarlyStopping
 import shap
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
+import logging
+from dotenv import load_dotenv
+
+# ------------------ CONFIGURATION ------------------
+# Initialize logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -45,8 +55,628 @@ st.set_page_config(
 # Auto-refresh every 2 minutes
 st_autorefresh(interval=120000, key="data_refresh")
 
-# Custom CSS with stunning visual enhancements
-st.markdown("""
+# ------------------ MODULES ------------------
+# Module 1: Data Fetching
+@st.cache_data(ttl=3600, show_spinner=False, max_entries=50)
+def get_stock_data(ticker, start, end):
+    """Fetch stock data from Yahoo Finance with robust error handling"""
+    try:
+        logger.info(f"Fetching data for {ticker} from {start} to {end}")
+        data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1))
+        
+        if data.empty:
+            logger.warning(f"No data found for {ticker}, trying 1-year period")
+            data = yf.download(ticker, period="1y")
+            if data.empty:
+                raise ValueError(f"No data available for {ticker}")
+        
+        # Validate data structure
+        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        for col in required_columns:
+            if col not in data.columns:
+                raise ValueError(f"Missing required column: {col}")
+                
+        return data
+    except Exception as e:
+        logger.error(f"Data fetch error: {str(e)}")
+        st.error(f"Data fetch error: {str(e)}. Please try a different ticker or date range.")
+        return pd.DataFrame()
+
+# Module 2: Technical Analysis
+def calculate_technical_indicators(data):
+    """Calculate various technical indicators for stock data"""
+    if 'Close' not in data.columns or len(data) < 20:
+        return data
+    
+    close_series = data['Close'].squeeze()
+    
+    # Moving Averages
+    try:
+        data['SMA20'] = close_series.rolling(window=20).mean()
+        data['SMA50'] = close_series.rolling(window=50).mean()
+        data['EMA20'] = close_series.ewm(span=20, adjust=False).mean()
+    except Exception as e:
+        logger.error(f"Error calculating moving averages: {str(e)}")
+    
+    # RSI
+    try:
+        data['RSI'] = ta.momentum.rsi(close_series, window=14)
+    except Exception as e:
+        logger.error(f"Error calculating RSI: {str(e)}")
+    
+    # MACD
+    try:
+        macd = ta.trend.MACD(close_series)
+        data['MACD'] = macd.macd()
+        data['MACD_Signal'] = macd.macd_signal()
+        data['MACD_Hist'] = macd.macd_diff()
+    except Exception as e:
+        logger.error(f"Error calculating MACD: {str(e)}")
+    
+    # Bollinger Bands
+    try:
+        bollinger = ta.volatility.BollingerBands(close_series, window=20, window_dev=2)
+        data['BB_Upper'] = bollinger.bollinger_hband()
+        data['BB_Lower'] = bollinger.bollinger_lband()
+        data['BB_Width'] = bollinger.bollinger_hband() - bollinger.bollinger_lband()
+    except Exception as e:
+        logger.error(f"Error calculating Bollinger Bands: {str(e)}")
+    
+    return data.dropna()
+
+# Module 3: Sentiment Analysis
+@st.cache_resource(show_spinner=False)
+def load_sentiment_model():
+    """Load and cache the sentiment analysis model"""
+    logger.info("Loading sentiment model")
+    return pipeline("sentiment-analysis", model="ProsusAI/finbert")
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_news(ticker):
+    """Fetch news articles related to a stock ticker"""
+    logger.info(f"Fetching news for {ticker}")
+    api_key = os.getenv("NEWS_API_KEY") or st.secrets.get("NEWS_API_KEY")
+    if not api_key:
+        logger.error("News API key not found")
+        st.error("News API key not configured. News features disabled.")
+        return []
+    
+    company_map = {
+        "NTPC.NS": "NTPC",
+        "VMM.NS": "Vishnu Chemicals",
+        "SAGILITY.NS": "Sagility India",
+        "TATAMOTORS.NS": "Tata Motors",
+        "TCS.NS": "TCS",
+        "SBIN.NS": "SBI",
+        "KALYANKJIL.NS": "Kalyan Jewellers",
+        "SWANENERGY.NS": "Swan Energy",
+        "PRAJIND.NS": "Praj Industries",
+        "RELIANCE.NS": "Reliance Industries",
+        "HDFCBANK.NS": "HDFC Bank",
+        "INFY.NS": "Infosys",
+        "ICICIBANK.NS": "ICICI Bank",
+        "HINDUNILVR.NS": "Hindustan Unilever",
+        "BAJFINANCE.NS": "Bajaj Finance",
+        "LT.NS": "Larsen & Toubro",
+        "AXISBANK.NS": "Axis Bank",
+        "ADANIENT.NS": "Adani Enterprises",
+        "BHARTIARTL.NS": "Bharti Airtel",
+        "HCLTECH.NS": "HCL Technologies",
+        "KOTAKBANK.NS": "Kotak Mahindra Bank",
+        "ITC.NS": "ITC",
+        "ASIANPAINT.NS": "Asian Paints",
+        "MARUTI.NS": "Maruti Suzuki",
+        "TITAN.NS": "Titan Company",
+        "SUNPHARMA.NS": "Sun Pharma"
+    }
+    
+    query = company_map.get(ticker, ticker.split('.')[0])
+    url = f"https://newsapi.org/v2/everything?q={query}&language=en&sortBy=publishedAt&pageSize=5&apiKey={api_key}"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("status") != "ok":
+            logger.error(f"News API error: {data.get('message', 'Unknown error')}")
+            return []
+            
+        return [
+            {
+                "title": a.get("title", ""),
+                "summary": a.get("description", ""),
+                "link": a.get("url", ""),
+                "date": a.get("publishedAt", "")
+            } for a in data.get("articles", [])
+        ]
+    except Exception as e:
+        logger.error(f"News error: {e}")
+        return []
+
+# Module 4: Forecasting
+def prophet_forecast(data, forecast_days):
+    """Perform time series forecasting using Prophet"""
+    if len(data) < 90:
+        raise ValueError("Need at least 90 days of data for forecasting")
+    
+    prophet_df = data[['Close']].reset_index()
+    prophet_df.columns = ['ds', 'y']
+    
+    model = Prophet(
+        daily_seasonality=False,
+        yearly_seasonality=True,
+        weekly_seasonality=True,
+        changepoint_prior_scale=0.01,
+        seasonality_prior_scale=5,
+        changepoint_range=0.8,
+        uncertainty_samples=100
+    )
+    
+    model.fit(prophet_df)
+    future = model.make_future_dataframe(periods=forecast_days)
+    return model.predict(future)
+
+def tft_forecast(data, forecast_days):
+    """Perform time series forecasting using Temporal Fusion Transformer"""
+    # Add technical indicators
+    data = calculate_technical_indicators(data.copy())
+    
+    # Prepare data for TFT
+    df = data.reset_index()
+    df.rename(columns={'Date': 'date'}, inplace=True)
+    df['time_idx'] = np.arange(len(df))
+    df['series'] = "stock"
+    df['date'] = pd.to_datetime(df['date'])
+    
+    # Define features
+    features = ['Close', 'SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Signal', 'MACD_Hist', 
+                'BB_Upper', 'BB_Lower', 'BB_Width']
+    available_features = [f for f in features if f in df.columns]
+    
+    # Create time features
+    df['month'] = df['date'].dt.month.astype(str)
+    df['day'] = df['date'].dt.day.astype(str)
+    df['dayofweek'] = df['date'].dt.dayofweek.astype(str)
+    df['quarter'] = df['date'].dt.quarter.astype(str)
+    
+    # Define training parameters
+    max_prediction_length = forecast_days
+    max_encoder_length = min(180, len(df) - max_prediction_length - 1)
+    
+    if max_encoder_length < 60:
+        raise ValueError("Insufficient data for TFT forecasting. Need at least 60 days of data.")
+    
+    training_cutoff = df["time_idx"].max() - max_prediction_length
+    
+    # Create dataset
+    training = TimeSeriesDataSet(
+        df[df["time_idx"] <= training_cutoff],
+        time_idx="time_idx",
+        target="Close",
+        group_ids=["series"],
+        min_encoder_length=max_encoder_length // 2,
+        max_encoder_length=max_encoder_length,
+        min_prediction_length=1,
+        max_prediction_length=max_prediction_length,
+        static_categoricals=["series"],
+        time_varying_known_categoricals=["month", "day", "dayofweek", "quarter"],
+        time_varying_known_reals=["time_idx"],
+        time_varying_unknown_reals=available_features,
+        target_normalizer=GroupNormalizer(groups=["series"], transformation="softplus"),
+        add_relative_time_idx=True,
+        add_target_scales=True,
+        add_encoder_length=True,
+    )
+    
+    # Create validation set
+    validation = TimeSeriesDataSet.from_dataset(training, df, predict=True, stop_randomization=True)
+    
+    # Create dataloaders
+    batch_size = 16
+    train_dataloader = training.to_dataloader(train=True, batch_size=batch_size, num_workers=0)
+    val_dataloader = validation.to_dataloader(train=False, batch_size=batch_size, num_workers=0)
+    
+    # Configure TFT with QuantileLoss
+    pl.seed_everything(42)
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=3, verbose=False, mode="min")
+    
+    tft = TemporalFusionTransformer.from_dataset(
+        training,
+        learning_rate=0.01,
+        hidden_size=16,
+        attention_head_size=2,
+        dropout=0.1,
+        hidden_continuous_size=8,
+        output_size=3,  # For P10, P50, P90
+        loss=torch.nn.QuantileLoss(quantiles=[0.1, 0.5, 0.9]),
+        reduce_on_plateau_patience=2,
+    )
+    
+    # Train model
+    trainer = pl.Trainer(
+        max_epochs=15,
+        gpus=0,
+        enable_progress_bar=False,
+        gradient_clip_val=0.1,
+        callbacks=[early_stop_callback],
+        limit_train_batches=15,
+        enable_checkpointing=True,
+    )
+    
+    trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+    
+    # Generate predictions
+    raw_predictions, x = tft.predict(val_dataloader, mode="raw", return_x=True)
+    
+    # Extract forecast values
+    forecast = raw_predictions[0].output.prediction[1].cpu().numpy().flatten()  # P50
+    lower_band = raw_predictions[0].output.prediction[0].cpu().numpy().flatten()  # P10
+    upper_band = raw_predictions[0].output.prediction[2].cpu().numpy().flatten()  # P90
+    
+    # Get actual values for comparison
+    actuals = torch.cat([y[0] for x, y in iter(val_dataloader)]).cpu().numpy()
+    
+    # Calculate RMSE
+    train_rmse = np.sqrt(mean_squared_error(actuals.flatten()[:len(forecast)], forecast))
+    
+    # Extract attention weights
+    attention = tft.interpret_output(raw_predictions, reduction="none")[1]['attention'][0].detach().cpu().numpy()
+    
+    return {
+        'forecast': forecast,
+        'upper_band': upper_band,
+        'lower_band': lower_band,
+        'train_rmse': train_rmse,
+        'test_rmse': train_rmse,
+        'attention': attention
+    }
+
+# Module 5: Portfolio Optimization
+@st.cache_data(ttl=3600, show_spinner=False)
+def prepare_portfolio_data(tickers, start_date, end_date):
+    """Prepare portfolio data for multiple tickers"""
+    price_data = {}
+    for ticker in tickers:
+        try:
+            df = yf.download(ticker, start=start_date - timedelta(days=60), end=end_date + timedelta(days=1))
+            if df.empty:
+                logger.warning(f"No data for {ticker}, skipping...")
+                continue
+            price_data[ticker] = df['Close']
+        except Exception as e:
+            logger.error(f"Error loading {ticker}: {str(e)}")
+            continue
+
+    if not price_data:
+        return pd.DataFrame()
+
+    combined_df = pd.concat(price_data.values(), axis=1, keys=price_data.keys())
+    combined_df.columns = combined_df.columns.droplevel(1)
+    return combined_df.dropna(how='all')
+
+def optimize_portfolio(returns, risk_tolerance):
+    """Optimize portfolio using Modern Portfolio Theory"""
+    if returns.empty or returns.shape[1] < 2:
+        return None
+
+    mu = returns.mean().values
+    Sigma = returns.cov().values
+    n = len(mu)
+    
+    w = cp.Variable(n)
+    gamma = cp.Parameter(nonneg=True)
+    gamma.value = risk_tolerance
+
+    ret = mu.T @ w
+    risk = cp.quad_form(w, Sigma)
+
+    prob = cp.Problem(cp.Maximize(ret - gamma * risk),
+                     [cp.sum(w) == 1, w >= 0])
+    
+    try:
+        prob.solve()
+        return w.value
+    except Exception as e:
+        logger.error(f"Optimization failed: {str(e)}")
+        return np.ones(n) / n
+
+# Module 6: Backtesting
+def backtest_strategy(data, strategy):
+    """Backtest a trading strategy (simplified version)"""
+    # Placeholder - in real implementation, run actual backtest
+    returns = {
+        'Moving Average Crossover': np.random.uniform(5, 25),
+        'RSI Divergence': np.random.uniform(8, 30),
+        'Bollinger Band Reversion': np.random.uniform(7, 22),
+        'MACD Crossover': np.random.uniform(6, 20),
+        'Golden Cross': np.random.uniform(10, 28)
+    }
+    
+    drawdowns = {
+        'Moving Average Crossover': np.random.uniform(8, 15),
+        'RSI Divergence': np.random.uniform(6, 12),
+        'Bollinger Band Reversion': np.random.uniform(5, 10),
+        'MACD Crossover': np.random.uniform(7, 14),
+        'Golden Cross': np.random.uniform(9, 16)
+    }
+    
+    return {
+        'return': returns[strategy],
+        'drawdown': drawdowns[strategy],
+        'sharpe': np.random.uniform(0.8, 1.8)
+    }
+
+# Module 7: UI Components
+def render_metrics(data, ticker, start_date, end_date):
+    """Render key metrics for a stock"""
+    if len(data) > 1 and 'Close' in data.columns:
+        current_price = float(data['Close'].iloc[-1])
+        prev_price = float(data['Close'].iloc[-2]) if len(data) >= 2 else current_price
+        volume = float(data['Volume'].iloc[-1]) if 'Volume' in data.columns else 0.0
+        daily_change = ((current_price - prev_price) / prev_price * 100) if prev_price != 0 else 0.0
+        volatility = float(calculate_volatility(data))
+        annual_return = float(calculate_annual_return(data, start_date, end_date))
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.markdown(f'''
+            <div class="metric-card">
+                <b>Current Price</b><br>${current_price:.2f}
+            </div>''', unsafe_allow_html=True)
+        col2.markdown(f'''
+            <div class="metric-card">
+                <b>Daily Change</b><br>{daily_change:.2f}%
+            </div>''', unsafe_allow_html=True)
+        col3.markdown(f'''
+            <div class="metric-card">
+                <b>Annual Volatility</b><br>{volatility:.2f}%
+            </div>''', unsafe_allow_html=True)
+        col4.markdown(f'''
+            <div class="metric-card">
+                <b>Annual Return</b><br>{annual_return:.2f}%
+            </div>''', unsafe_allow_html=True)
+    else:
+        st.warning("Insufficient data to calculate metrics")
+
+# ------------------ UTILITY FUNCTIONS ------------------
+def calculate_annual_return(data, start_date, end_date):
+    """Calculate annualized return for a stock"""
+    if 'Adj Close' in data.columns:
+        price_col = 'Adj Close'
+    elif 'Close' in data.columns:
+        price_col = 'Close'
+    else:
+        return 0.0
+
+    mask = (data.index >= pd.Timestamp(start_date)) & (data.index <= pd.Timestamp(end_date))
+    filtered = data.loc[mask]
+    
+    if len(filtered) < 2:
+        return 0.0
+        
+    start_price = filtered[price_col].iloc[0]
+    end_price = filtered[price_col].iloc[-1]
+    
+    # Calculate total return percentage
+    total_return = (end_price / start_price) - 1
+    
+    # Calculate actual holding period in years
+    days_held = (filtered.index[-1] - filtered.index[0]).days
+    years_held = days_held / 365.25
+    
+    # Avoid division by zero
+    if years_held == 0:
+        return 0.0
+
+    # Calculate annualized return
+    return (1 + total_return) ** (1 / years_held) - 1
+
+def calculate_volatility(data):
+    """Calculate annualized volatility for a stock"""
+    if len(data) < 30:
+        return 0.0
+    if 'Close' in data.columns:
+        close_series = data['Close'].squeeze()
+        returns = close_series.pct_change().dropna()
+        if len(returns) < 30:
+            return 0.0
+        daily_vol = returns.std()
+        return daily_vol * np.sqrt(252)
+
+def clean_text(text):
+    """Clean text for sentiment analysis"""
+    if not text:
+        return ""
+    text = re.sub(r'http\S+', '', text)
+    text = re.sub(r'\W', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text[:512]
+
+def calculate_annualized_return(series):
+    """Calculate annualized return from a price series"""
+    returns = series.pct_change().dropna()
+    if len(returns) < 2:
+        return 0.0
+    return (1 + returns).prod() ** (252/len(returns)) - 1
+
+def create_options_payoff(strike_price, premium, option_type, num_contracts=1):
+    """Calculate options payoff diagram"""
+    stock_prices = np.linspace(strike_price * 0.7, strike_price * 1.3, 100)
+    contract_size = 100  # Standard contract size
+    
+    if option_type == 'call':
+        payoff = np.maximum(stock_prices - strike_price, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
+    else:  # put
+        payoff = np.maximum(strike_price - stock_prices, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
+    
+    return stock_prices, payoff
+
+def get_earnings_data(ticker):
+    """Get earnings data for a stock (placeholder)"""
+    # Placeholder - in real implementation, use API to get earnings data
+    company = yf.Ticker(ticker)
+    earnings = company.earnings_dates
+    
+    if earnings is None or earnings.empty:
+        # Create mock data
+        dates = pd.date_range(end=datetime.today(), periods=8, freq='Q')
+        earnings = pd.DataFrame({
+            'Earnings Date': dates,
+            'EPS Estimate': np.random.uniform(0.5, 2.5, 8),
+            'Reported EPS': np.random.uniform(0.4, 2.6, 8),
+            'Surprise (%)': np.random.uniform(-15, 15, 8)
+        })
+        earnings.set_index('Earnings Date', inplace=True)
+        return earnings.tail(4)
+    
+    earnings = earnings.dropna()
+    earnings['Surprise (%)'] = ((earnings['Reported EPS'] - earnings['EPS Estimate']) / 
+                               earnings['EPS Estimate'].abs()) * 100
+    return earnings.tail(4)
+
+def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="Moderate", investment_goal="Growth"):
+    """Generate AI-powered response to investment questions"""
+    # Convert query to lower case for better matching
+    query_lower = query.lower()
+    
+    # Get technical indicators
+    if 'Close' in stock_data.columns and not stock_data.empty:
+        close_series = stock_data['Close'].squeeze()
+        rsi = ta.momentum.RSIIndicator(close_series).rsi().iloc[-1] if len(close_series) > 0 else 50
+        macd = ta.trend.MACD(close_series).macd_diff().iloc[-1] if len(close_series) > 0 else 0
+        current_price = close_series.iloc[-1] if len(close_series) > 0 else 100
+        volatility = calculate_volatility(stock_data) if len(stock_data) > 30 else 20
+        
+        # Get comparison price (30 days ago or first available)
+        comparison_idx = max(0, len(close_series) - 30)
+        comparison_price = close_series.iloc[comparison_idx] if len(close_series) > comparison_idx else current_price
+        price_trend = "upward" if current_price > comparison_price else "downward"
+    else:
+        rsi, macd, current_price, volatility, price_trend = 50, 0, 100, 20, "neutral"
+    
+    # Define comprehensive responses with more context
+    responses = {
+        "risk": f"""
+        Based on our analysis:
+        - 30-day volatility: {volatility:.1f}% ({'above' if volatility > 30 else 'below'} sector average)
+        - RSI: {rsi:.1f} ({'overbought' if rsi > 70 else 'oversold' if rsi < 30 else 'neutral'})
+        - MACD: {'bullish' if macd > 0 else 'bearish'}
+        - Price trend: {price_trend} over last month
+        """,
+        "forecast": f"""
+        Our forecasting models predict:
+        - Short-term (1 month): {np.random.uniform(-5,10):.1f}% change
+        - Medium-term (3 months): {np.random.uniform(-10,20):.1f}% change
+        - Long-term (1 year): {np.random.uniform(-15,30):.1f}% change
+        Technical indicators: 
+        - Support level: ${current_price * 0.95:.2f}
+        - Resistance level: ${current_price * 1.05:.2f}
+        """,
+        "portfolio": f"""
+        For your {risk_profile} risk profile and {investment_goal} investment goal:
+        - Recommended allocation: {np.random.randint(5,15)}% of portfolio
+        - Optimal entry point: ${current_price * 0.97:.2f}
+        - Position sizing: {np.random.randint(500,2000)} shares
+        - Hedge strategy: {'covered calls' if risk_profile == 'Conservative' else 'protective puts'}
+        """,
+        "buy": f"""
+        Based on current technicals and fundamentals:
+        - Current price: ${current_price:.2f}
+        - Target price: ${current_price * 1.12:.2f} (12% upside)
+        - Stop loss: ${current_price * 0.92:.2f} (8% downside)
+        - Risk-reward ratio: 1:{np.random.uniform(1.5,3.0):.1f}
+        Recommendation: {'Strong buy' if rsi < 40 and macd > 0 else 'Buy' if rsi < 50 else 'Accumulate on dips'}
+        """,
+        "sell": f"""
+        Analysis suggests:
+        - Current price: ${current_price:.2f}
+        - Target exit: ${current_price * 0.95:.2f}
+        - Potential downside: {np.random.uniform(5,15):.1f}%
+        - Technical indicators: {'bearish crossover' if macd < 0 else 'overbought conditions'}
+        Recommendation: {'Sell now' if rsi > 70 and macd < 0 else 'Set trailing stop' if rsi > 60 else 'Hold for now'}
+        """,
+        "outlook": f"""
+        12-month fundamental outlook:
+        - Projected EPS growth: {np.random.randint(5,25)}%
+        - P/E expansion potential: {np.random.randint(0,15)}%
+        - Sector outlook: {'positive' if np.random.random() > 0.5 else 'neutral'}
+        - Analyst consensus: {'Buy' if np.random.random() > 0.3 else 'Hold'}
+        Price target range: ${current_price * 0.9:.2f} - ${current_price * 1.25:.2f}
+        """,
+        "analysis": f"""
+        Multi-factor analysis:
+        - Technical score: {np.random.randint(60,90)}/100
+        - Fundamental score: {np.random.randint(50,95)}/100
+        - Sentiment score: {np.random.randint(40,85)}/100
+        - Risk assessment: {'Low' if volatility < 25 else 'Medium' if volatility < 40 else 'High'}
+        Composite rating: {'Strong' if np.random.random() > 0.5 else 'Moderate'}
+        """,
+        "default": f"""
+        Based on comprehensive analysis:
+        - Current technicals: {'Bullish' if macd > 0 else 'Bearish'}
+        - Market sentiment: {'Positive' if np.random.random() > 0.5 else 'Neutral'}
+        - Risk-adjusted return potential: {np.random.uniform(5,15):.1f}%
+        Recommendation: {'Buy' if macd > 0 and rsi < 60 else 'Hold' if rsi < 70 else 'Sell'}
+        Price targets: 
+          Short-term (1M): ${current_price * 1.05:.2f}
+          Medium-term (3M): ${current_price * 1.12:.2f}
+          Long-term (1Y): ${current_price * 1.25:.2f}
+        """
+    }
+    
+    # Better keyword matching
+    if "risk" in query_lower:
+        return responses["risk"]
+    elif "forecast" in query_lower or "predict" in query_lower:
+        return responses["forecast"]
+    elif "portfolio" in query_lower or "allocat" in query_lower:
+        return responses["portfolio"]
+    elif "buy" in query_lower:
+        return responses["buy"]
+    elif "sell" in query_lower:
+        return responses["sell"]
+    elif "outlook" in query_lower or "future" in query_lower:
+        return responses["outlook"]
+    elif "analysis" in query_lower or "evaluat" in query_lower:
+        return responses["analysis"]
+    else:
+        return responses["default"]
+
+def get_macro_data():
+    """Get macroeconomic data (placeholder)"""
+    # Placeholder - in real implementation, use API
+    return {
+        'inflation': 3.2,
+        'interest_rate': 5.25,
+        'unemployment': 3.8,
+        'gdp_growth': 2.1,
+        'consumer_sentiment': 78.4,
+        'manufacturing_pmi': 52.7
+    }
+
+def get_institutional_activity(ticker):
+    """Get institutional activity data (placeholder)"""
+    # Placeholder - in real implementation, use API
+    dates = pd.date_range(end=datetime.today(), periods=12, freq='M')
+    return pd.DataFrame({
+        'Date': dates,
+        'Shares Held': np.random.randint(1000000, 5000000, 12),
+        '% Change': np.random.uniform(-5, 5, 12),
+        'Number of Institutions': np.random.randint(100, 500, 12)
+    })
+
+def plot_attention_weights(attention):
+    """Plot TFT attention weights"""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    cax = ax.matshow(attention, cmap='viridis')
+    fig.colorbar(cax)
+    ax.set_title("TFT Attention Weights")
+    ax.set_xlabel("Encoder Time Steps")
+    ax.set_ylabel("Decoder Time Steps")
+    return fig
+
+# ------------------ UI STYLES ------------------
+CUSTOM_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
     
@@ -619,643 +1249,23 @@ st.markdown("""
         box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
     }
 </style>
-""", unsafe_allow_html=True)
+"""
 
-@st.cache_resource(show_spinner=False)
-def load_sentiment_model():
-    return pipeline("sentiment-analysis", model="ProsusAI/finbert")
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_stock_data(ticker, start, end):
-    try:
-        data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1))
-        if data.empty:
-            data = yf.download(ticker, period="1y")
-        for col in data.columns:
-            data[col] = data[col].squeeze()
-        return data
-    except Exception as e:
-        st.error(f"Data fetch error: {str(e)}")
-        return pd.DataFrame()
-
-def calculate_annual_return(data, start_date, end_date):
-    if 'Adj Close' in data.columns:
-        price_col = 'Adj Close'
-    elif 'Close' in data.columns:
-        price_col = 'Close'
-    else:
-        return 0.0
-
-    mask = (data.index >= pd.Timestamp(start_date)) & (data.index <= pd.Timestamp(end_date))
-    filtered = data.loc[mask]
-    
-    if len(filtered) < 2:
-        return 0.0
-        
-    start_price = filtered[price_col].iloc[0]
-    end_price = filtered[price_col].iloc[-1]
-    
-    # Calculate total return percentage
-    total_return = (end_price / start_price) - 1
-    
-    # Calculate actual holding period in years
-    days_held = (filtered.index[-1] - filtered.index[0]).days
-    years_held = days_held / 365.25
-    
-    # Avoid division by zero
-    if years_held == 0:
-        return 0.0
-
-    # Calculate annualized return
-    annualized_return = (1 + total_return) ** (1 / years_held) - 1
-    return float(annualized_return * 100)
-
-def calculate_volatility(data):
-    if len(data) < 30:
-        return 0.0
-    if 'Close' in data.columns:
-        close_series = data['Close'].squeeze()  # Ensure 1D series
-        returns = close_series.pct_change().dropna()
-        if len(returns) < 30:
-            return 0.0
-        daily_vol = returns.std()
-        return float(daily_vol * np.sqrt(252) * 100)
-    return 0.0
-
-    daily_vol = returns.std()
-    return float(daily_vol * np.sqrt(252) * 100)
-
-@st.cache_data(ttl=600, show_spinner=False)
-def get_news(ticker):
-    api_key = os.getenv("NEWS_API_KEY")
-    company_map = {
-        "NTPC.NS": "NTPC",
-        "VMM.NS": "Vishnu Chemicals",
-        "SAGILITY.NS": "Sagility India",
-        "TATAMOTORS.NS": "Tata Motors",
-        "TCS.NS": "TCS",
-        "SBIN.NS": "SBI",
-        "KALYANKJIL.NS": "Kalyan Jewellers",
-        "SWANENERGY.NS": "Swan Energy",
-        "PRAJIND.NS": "Praj Industries",
-        "RELIANCE.NS": "Reliance Industries",
-        "HDFCBANK.NS": "HDFC Bank",
-        "INFY.NS": "Infosys",
-        "ICICIBANK.NS": "ICICI Bank",
-        "HINDUNILVR.NS": "Hindustan Unilever",
-        "BAJFINANCE.NS": "Bajaj Finance",
-        "LT.NS": "Larsen & Toubro",
-        "AXISBANK.NS": "Axis Bank",
-        "ADANIENT.NS": "Adani Enterprises",
-        "BHARTIARTL.NS": "Bharti Airtel",
-        "HCLTECH.NS": "HCL Technologies",
-        "KOTAKBANK.NS": "Kotak Mahindra Bank",
-        "ITC.NS": "ITC",
-        "ASIANPAINT.NS": "Asian Paints",
-        "MARUTI.NS": "Maruti Suzuki",
-        "TITAN.NS": "Titan Company",
-        "SUNPHARMA.NS": "Sun Pharma"
-    }
-    query = company_map.get(ticker, ticker.split('.')[0])
-    url = f"https://newsapi.org/v2/everything?q={query}&language=en&sortBy=publishedAt&pageSize=5&apiKey={api_key}"
-    try:
-        response = requests.get(url)
-        data = response.json()
-        if data.get("status") != "ok":
-            return []
-        return [
-            {
-                "title": a.get("title", ""),
-                "summary": a.get("description", ""),
-                "link": a.get("url", ""),
-                "date": a.get("publishedAt", "")
-            } for a in data.get("articles", [])
-        ]
-    except Exception as e:
-        st.error(f"News error: {e}")
-        return []
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def prepare_portfolio_data(tickers, start_date, end_date):
-    price_data = {}
-    for ticker in tickers:
-        try:
-            df = yf.download(ticker, start=start_date - timedelta(days=60), end=end_date + timedelta(days=1))
-            if df.empty:
-                st.warning(f"No data for {ticker}, skipping...")
-                continue
-            price_data[ticker] = df['Close']
-        except Exception as e:
-            st.warning(f"Error loading {ticker}: {str(e)}")
-            continue
-
-    if not price_data:
-        return pd.DataFrame()
-
-    combined_df = pd.concat(price_data.values(), axis=1, keys=price_data.keys())
-    combined_df.columns = combined_df.columns.droplevel(1)
-    return combined_df.dropna(how='all')
-
-def optimize_portfolio(returns, risk_tolerance):
-    if returns.empty or returns.shape[1] < 2:
-        return None
-
-    mu = returns.mean().values
-    Sigma = returns.cov().values
-
-    n = len(mu)
-    w = cp.Variable(n)
-    gamma = cp.Parameter(nonneg=True)
-    gamma.value = risk_tolerance
-
-    ret = mu.T @ w
-    risk = cp.quad_form(w, Sigma)
-
-    prob = cp.Problem(cp.Maximize(ret - gamma * risk),
-                     [cp.sum(w) == 1, w >= 0])
-    try:
-        prob.solve()
-        return w.value
-    except Exception as e:
-        st.error(f"Optimization failed: {str(e)}")
-        return np.ones(n) / n
-
-def clean_text(text):
-    if not text:
-        return ""
-    text = re.sub(r'http\S+', '', text)
-    text = re.sub(r'\W', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text[:512]
-
-def calculate_annualized_return(series):
-    returns = series.pct_change().dropna()
-    if len(returns) < 2:
-        return 0.0
-    return (1 + returns).prod() ** (252/len(returns)) - 1
-
-# Calculate technical indicators
-def add_technical_indicators(data):
-    if 'Close' not in data.columns or len(data) < 20:
-        return data
-    
-    # Ensure we're working with a 1D Series
-    close_series = data['Close'].squeeze()
-    
-    # Moving Averages
-    try:
-        data['SMA20'] = close_series.rolling(window=20).mean()
-        data['SMA50'] = close_series.rolling(window=50).mean()
-        data['EMA20'] = close_series.ewm(span=20, adjust=False).mean()
-    except Exception as e:
-        st.warning(f"Error calculating moving averages: {str(e)}")
-    
-    # RSI
-    try:
-        data['RSI'] = ta.momentum.rsi(close_series, window=14)
-    except Exception as e:
-        st.warning(f"Error calculating RSI: {str(e)}")
-    
-    # MACD
-    try:
-        macd = ta.trend.MACD(close_series)
-        data['MACD'] = macd.macd()
-        data['MACD_Signal'] = macd.macd_signal()
-        data['MACD_Hist'] = macd.macd_diff()
-    except Exception as e:
-        st.warning(f"Error calculating MACD: {str(e)}")
-    
-    # Bollinger Bands
-    try:
-        bollinger = ta.volatility.BollingerBands(close_series, window=20, window_dev=2)
-        data['BB_Upper'] = bollinger.bollinger_hband()
-        data['BB_Lower'] = bollinger.bollinger_lband()
-        data['BB_Width'] = bollinger.bollinger_hband() - bollinger.bollinger_lband()
-    except Exception as e:
-        st.warning(f"Error calculating Bollinger Bands: {str(e)}")
-    
-    # Drop any remaining NaN values
-    data = data.dropna()
-    
-    return data
-
-# Temporal Fusion Transformer Forecasting with Technical Indicators
-@st.cache_resource(show_spinner=False)
-def create_tft_model(data, forecast_days=30):
-    # Add technical indicators
-    data = add_technical_indicators(data.copy())
-    
-    # Prepare data for TFT
-    df = data.reset_index()
-    df.rename(columns={'Date': 'date'}, inplace=True)
-    df['time_idx'] = np.arange(len(df))
-    df['series'] = "stock"
-    
-    # Ensure proper data types
-    df['date'] = pd.to_datetime(df['date'])
-    
-    # Define features
-    features = ['Close', 'SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Signal', 'MACD_Hist', 
-                'BB_Upper', 'BB_Lower', 'BB_Width']
-    
-    # Only keep available features
-    available_features = [f for f in features if f in df.columns]
-    
-    # Create features - convert to strings for categorical encoding
-    df['month'] = df['date'].dt.month.astype(str)
-    df['day'] = df['date'].dt.day.astype(str)
-    df['dayofweek'] = df['date'].dt.dayofweek.astype(str)
-    df['quarter'] = df['date'].dt.quarter.astype(str)
-    
-    # Define training parameters
-    max_prediction_length = forecast_days
-    max_encoder_length = min(180, len(df) - max_prediction_length - 1)
-    
-    if max_encoder_length < 60:
-        st.warning("Insufficient data for TFT forecasting. Need at least 60 days of data.")
-        return {
-            'forecast': np.zeros(forecast_days),
-            'upper_band': np.zeros(forecast_days),
-            'lower_band': np.zeros(forecast_days),
-            'train_rmse': 0,
-            'test_rmse': 0
-        }
-    
-    training_cutoff = df["time_idx"].max() - max_prediction_length
-    
-    # Create dataset
-    try:
-        training = TimeSeriesDataSet(
-            df[df["time_idx"] <= training_cutoff],
-            time_idx="time_idx",
-            target="Close",
-            group_ids=["series"],
-            min_encoder_length=max_encoder_length // 2,
-            max_encoder_length=max_encoder_length,
-            min_prediction_length=1,
-            max_prediction_length=max_prediction_length,
-            static_categoricals=["series"],
-            time_varying_known_categoricals=["month", "day", "dayofweek", "quarter"],
-            time_varying_known_reals=["time_idx"],
-            time_varying_unknown_reals=available_features,
-            target_normalizer=GroupNormalizer(groups=["series"], transformation="softplus"),
-            add_relative_time_idx=True,
-            add_target_scales=True,
-            add_encoder_length=True,
-        )
-    except Exception as e:
-        st.error(f"Error creating TFT dataset: {str(e)}")
-        return {
-            'forecast': np.zeros(forecast_days),
-            'upper_band': np.zeros(forecast_days),
-            'lower_band': np.zeros(forecast_days),
-            'train_rmse': 0,
-            'test_rmse': 0
-        }
-    
-    # Create validation set
-    validation = TimeSeriesDataSet.from_dataset(training, df, predict=True, stop_randomization=True)
-    
-    # Create dataloaders
-    batch_size = 16  # Reduced for performance
-    train_dataloader = training.to_dataloader(train=True, batch_size=batch_size, num_workers=0)
-    val_dataloader = validation.to_dataloader(train=False, batch_size=batch_size, num_workers=0)
-    
-    # Configure TFT with QuantileLoss
-    pl.seed_everything(42)
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=3, verbose=False, mode="min")
-    
-    tft = TemporalFusionTransformer.from_dataset(
-        training,
-        learning_rate=0.01,
-        hidden_size=16,
-        attention_head_size=2,
-        dropout=0.1,
-        hidden_continuous_size=8,
-        output_size=3,  # For P10, P50, P90
-        loss=torch.nn.QuantileLoss(quantiles=[0.1, 0.5, 0.9]),
-        reduce_on_plateau_patience=2,
-    )
-    
-    # Train model
-    trainer = pl.Trainer(
-        max_epochs=15,
-        gpus=0,
-        enable_progress_bar=False,
-        gradient_clip_val=0.1,
-        callbacks=[early_stop_callback],
-        limit_train_batches=15,
-        enable_checkpointing=True,
-    )
-    
-    try:
-        trainer.fit(
-            tft,
-            train_dataloaders=train_dataloader,
-            val_dataloaders=val_dataloader,
-        )
-    except Exception as e:
-        st.error(f"Error training TFT model: {str(e)}")
-        return {
-            'forecast': np.zeros(forecast_days),
-            'upper_band': np.zeros(forecast_days),
-            'lower_band': np.zeros(forecast_days),
-            'train_rmse': 0,
-            'test_rmse': 0
-        }
-    
-    # Generate predictions
-    try:
-        raw_predictions, x = tft.predict(val_dataloader, mode="raw", return_x=True)
-        
-        # Extract forecast values (P50 for main forecast, P10/P90 for bands)
-        forecast = raw_predictions[0].output.prediction[1].cpu().numpy().flatten()  # P50
-        lower_band = raw_predictions[0].output.prediction[0].cpu().numpy().flatten()  # P10
-        upper_band = raw_predictions[0].output.prediction[2].cpu().numpy().flatten()  # P90
-        
-        # Get actual values for comparison
-        actuals = torch.cat([y[0] for x, y in iter(val_dataloader)]).cpu().numpy()
-        
-        # Calculate RMSE
-        train_rmse = np.sqrt(mean_squared_error(actuals.flatten()[:len(forecast)], forecast))
-        test_rmse = train_rmse
-        
-        # Extract attention weights
-        attention = tft.interpret_output(raw_predictions, reduction="none")[1]['attention'][0].detach().cpu().numpy()
-        
-        return {
-            'forecast': forecast,
-            'upper_band': upper_band,
-            'lower_band': lower_band,
-            'train_rmse': train_rmse,
-            'test_rmse': test_rmse,
-            'model': tft,
-            'attention': attention
-        }
-    except Exception as e:
-        st.error(f"Error generating predictions: {str(e)}")
-        return {
-            'forecast': np.zeros(forecast_days),
-            'upper_band': np.zeros(forecast_days),
-            'lower_band': np.zeros(forecast_days),
-            'train_rmse': 0,
-            'test_rmse': 0
-        }
-
-# Feature Importance with SHAP
-def calculate_feature_importance(data):
-    if len(data) < 30:
-        return None
-        
-    # Add technical indicators
-    data = add_technical_indicators(data.copy())
-    
-    # Create target (next day's return)
-    data['target'] = data['Close'].pct_change().shift(-1)
-    data = data.dropna()
-    
-    if len(data) < 30:
-        return None
-        
-    # Select features
-    features = ['Open', 'High', 'Low', 'Volume', 'SMA20', 'SMA50', 'EMA20', 
-                'RSI', 'MACD', 'MACD_Signal', 'MACD_Hist', 'BB_Upper', 'BB_Lower', 'BB_Width']
-    available_features = [f for f in features if f in data.columns]
-    
-    if not available_features:
-        return None
-        
-    X = data[available_features]
-    y = data['target']
-    
-    # Train model
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X, y)
-    
-    # Calculate SHAP values
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X)
-    
-    return {
-        'features': available_features,
-        'shap_values': shap_values,
-        'expected_value': explainer.expected_value
-    }
-
-# Options Analysis
-def create_options_payoff(strike_price, premium, option_type, num_contracts=1):
-    stock_prices = np.linspace(strike_price * 0.7, strike_price * 1.3, 100)
-    contract_size = 100  # Standard contract size
-    
-    if option_type == 'call':
-        payoff = np.maximum(stock_prices - strike_price, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
-    else:  # put
-        payoff = np.maximum(strike_price - stock_prices, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
-    
-    return stock_prices, payoff
-
-# Earnings Analysis
-def get_earnings_data(ticker):
-    # Placeholder - in real implementation, use API to get earnings data
-    company = yf.Ticker(ticker)
-    earnings = company.earnings_dates
-    
-    if earnings is None or earnings.empty:
-        # Create mock data
-        dates = pd.date_range(end=datetime.today(), periods=8, freq='Q')
-        earnings = pd.DataFrame({
-            'Earnings Date': dates,
-            'EPS Estimate': np.random.uniform(0.5, 2.5, 8),
-            'Reported EPS': np.random.uniform(0.4, 2.6, 8),
-            'Surprise (%)': np.random.uniform(-15, 15, 8)
-        })
-        earnings.set_index('Earnings Date', inplace=True)
-        return earnings.tail(4)
-    
-    earnings = earnings.dropna()
-    earnings['Surprise (%)'] = ((earnings['Reported EPS'] - earnings['EPS Estimate']) / 
-                               earnings['EPS Estimate'].abs()) * 100
-    return earnings.tail(4)
-
-# Enhanced AI Assistant Response Generator
-def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="Moderate", investment_goal="Growth"):
-    # Convert query to lower case for better matching
-    query_lower = query.lower()
-    
-    # Get technical indicators
-    if 'Close' in stock_data.columns and not stock_data.empty:
-        close_series = stock_data['Close'].squeeze()
-        rsi = ta.momentum.RSIIndicator(close_series).rsi().iloc[-1] if len(close_series) > 0 else 50
-        macd = ta.trend.MACD(close_series).macd_diff().iloc[-1] if len(close_series) > 0 else 0
-        current_price = close_series.iloc[-1] if len(close_series) > 0 else 100
-        volatility = calculate_volatility(stock_data) if len(stock_data) > 30 else 20
-        
-        # Get comparison price (30 days ago or first available)
-        comparison_idx = max(0, len(close_series) - 30)
-        comparison_price = close_series.iloc[comparison_idx] if len(close_series) > comparison_idx else current_price
-        price_trend = "upward" if current_price > comparison_price else "downward"
-    else:
-        rsi, macd, current_price, volatility, price_trend = 50, 0, 100, 20, "neutral"
-    
-    # Define comprehensive responses with more context
-    responses = {
-        "risk": f"""
-        Based on our analysis:
-        - 30-day volatility: {volatility:.1f}% ({'above' if volatility > 30 else 'below'} sector average)
-        - RSI: {rsi:.1f} ({'overbought' if rsi > 70 else 'oversold' if rsi < 30 else 'neutral'})
-        - MACD: {'bullish' if macd > 0 else 'bearish'}
-        - Price trend: {price_trend} over last month
-        """,
-        "forecast": f"""
-        Our TFT forecasting model predicts:
-        - Short-term (1 month): {np.random.uniform(-5,10):.1f}% change
-        - Medium-term (3 months): {np.random.uniform(-10,20):.1f}% change
-        - Long-term (1 year): {np.random.uniform(-15,30):.1f}% change
-        Technical indicators: 
-        - Support level: ${current_price * 0.95:.2f}
-        - Resistance level: ${current_price * 1.05:.2f}
-        """,
-        "portfolio": f"""
-        For your {risk_profile} risk profile and {investment_goal} investment goal:
-        - Recommended allocation: {np.random.randint(5,15)}% of portfolio
-        - Optimal entry point: ${current_price * 0.97:.2f}
-        - Position sizing: {np.random.randint(500,2000)} shares
-        - Hedge strategy: {'covered calls' if risk_profile == 'Conservative' else 'protective puts'}
-        """,
-        "buy": f"""
-        Based on current technicals and fundamentals:
-        - Current price: ${current_price:.2f}
-        - Target price: ${current_price * 1.12:.2f} (12% upside)
-        - Stop loss: ${current_price * 0.92:.2f} (8% downside)
-        - Risk-reward ratio: 1:{np.random.uniform(1.5,3.0):.1f}
-        Recommendation: {'Strong buy' if rsi < 40 and macd > 0 else 'Buy' if rsi < 50 else 'Accumulate on dips'}
-        """,
-        "sell": f"""
-        Analysis suggests:
-        - Current price: ${current_price:.2f}
-        - Target exit: ${current_price * 0.95:.2f}
-        - Potential downside: {np.random.uniform(5,15):.1f}%
-        - Technical indicators: {'bearish crossover' if macd < 0 else 'overbought conditions'}
-        Recommendation: {'Sell now' if rsi > 70 and macd < 0 else 'Set trailing stop' if rsi > 60 else 'Hold for now'}
-        """,
-        "outlook": f"""
-        12-month fundamental outlook:
-        - Projected EPS growth: {np.random.randint(5,25)}%
-        - P/E expansion potential: {np.random.randint(0,15)}%
-        - Sector outlook: {'positive' if np.random.random() > 0.5 else 'neutral'}
-        - Analyst consensus: {'Buy' if np.random.random() > 0.3 else 'Hold'}
-        Price target range: ${current_price * 0.9:.2f} - ${current_price * 1.25:.2f}
-        """,
-        "analysis": f"""
-        Multi-factor analysis:
-        - Technical score: {np.random.randint(60,90)}/100
-        - Fundamental score: {np.random.randint(50,95)}/100
-        - Sentiment score: {np.random.randint(40,85)}/100
-        - Risk assessment: {'Low' if volatility < 25 else 'Medium' if volatility < 40 else 'High'}
-        Composite rating: {'Strong' if np.random.random() > 0.5 else 'Moderate'}
-        """,
-        "default": f"""
-        Based on comprehensive analysis:
-        - Current technicals: {'Bullish' if macd > 0 else 'Bearish'}
-        - Market sentiment: {'Positive' if np.random.random() > 0.5 else 'Neutral'}
-        - Risk-adjusted return potential: {np.random.uniform(5,15):.1f}%
-        Recommendation: {'Buy' if macd > 0 and rsi < 60 else 'Hold' if rsi < 70 else 'Sell'}
-        Price targets: 
-          Short-term (1M): ${current_price * 1.05:.2f}
-          Medium-term (3M): ${current_price * 1.12:.2f}
-          Long-term (1Y): ${current_price * 1.25:.2f}
-        """
-    }
-    
-    # Better keyword matching
-    if "risk" in query_lower:
-        return responses["risk"]
-    elif "forecast" in query_lower or "predict" in query_lower:
-        return responses["forecast"]
-    elif "portfolio" in query_lower or "allocat" in query_lower:
-        return responses["portfolio"]
-    elif "buy" in query_lower:
-        return responses["buy"]
-    elif "sell" in query_lower:
-        return responses["sell"]
-    elif "outlook" in query_lower or "future" in query_lower:
-        return responses["outlook"]
-    elif "analysis" in query_lower or "evaluat" in query_lower:
-        return responses["analysis"]
-    else:
-        return responses["default"]
-
-# Macroeconomic Data
-def get_macro_data():
-    # Placeholder - in real implementation, use API
-    return {
-        'inflation': 3.2,
-        'interest_rate': 5.25,
-        'unemployment': 3.8,
-        'gdp_growth': 2.1,
-        'consumer_sentiment': 78.4,
-        'manufacturing_pmi': 52.7
-    }
-
-# Backtesting
-def backtest_strategy(data, strategy):
-    # Placeholder - in real implementation, run actual backtest
-    returns = {
-        'Moving Average Crossover': np.random.uniform(5, 25),
-        'RSI Divergence': np.random.uniform(8, 30),
-        'Bollinger Band Reversion': np.random.uniform(7, 22),
-        'MACD Crossover': np.random.uniform(6, 20),
-        'Golden Cross': np.random.uniform(10, 28)
-    }
-    
-    drawdowns = {
-        'Moving Average Crossover': np.random.uniform(8, 15),
-        'RSI Divergence': np.random.uniform(6, 12),
-        'Bollinger Band Reversion': np.random.uniform(5, 10),
-        'MACD Crossover': np.random.uniform(7, 14),
-        'Golden Cross': np.random.uniform(9, 16)
-    }
-    
-    return {
-        'return': returns[strategy],
-        'drawdown': drawdowns[strategy],
-        'sharpe': np.random.uniform(0.8, 1.8)
-    }
-
-# Institutional Activity
-def get_institutional_activity(ticker):
-    # Placeholder - in real implementation, use API
-    dates = pd.date_range(end=datetime.today(), periods=12, freq='M')
-    return pd.DataFrame({
-        'Date': dates,
-        'Shares Held': np.random.randint(1000000, 5000000, 12),
-        '% Change': np.random.uniform(-5, 5, 12),
-        'Number of Institutions': np.random.randint(100, 500, 12)
-    })
-
-# Plot attention weights
-def plot_attention_weights(attention):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    cax = ax.matshow(attention, cmap='viridis')
-    fig.colorbar(cax)
-    ax.set_title("TFT Attention Weights")
-    ax.set_xlabel("Encoder Time Steps")
-    ax.set_ylabel("Decoder Time Steps")
-    return fig
-
-# ------------------ MAIN APP START ------------------
+# ------------------ MAIN APP ------------------
 def main():
-    st.markdown('<h1 class="header">🚀 QUANTUM STOCK ANALYTICS</h1>', unsafe_allow_html=True)
+    # Apply custom CSS
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     
-    # Animated subtitle
+    # Header
+    st.markdown('<h1 class="header">🚀 QUANTUM STOCK ANALYTICS</h1>', unsafe_allow_html=True)
     st.markdown("""
     <div style="text-align:center; margin-bottom:30px;">
         <h3 class="glow-text">AI-Powered Financial Intelligence Platform</h3>
     </div>
     """, unsafe_allow_html=True)
-    
     st.write(f"<div style='text-align:center; margin-bottom:30px;'>Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>", unsafe_allow_html=True)
 
+    # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")
     default_tickers = [
         "NTPC.NS", "VMM.NS", "SAGILITY.NS", "TATAMOTORS.NS",
@@ -1274,7 +1284,7 @@ def main():
     portfolio_size = st.sidebar.number_input("💰 Portfolio Size ($)", 10000, 1000000, 50000)
     portfolio_tickers = st.sidebar.multiselect("📊 Select Portfolio Stocks", default_tickers, default=default_tickers[:5])
     
-    # Add market sentiment gauge
+    # Market sentiment gauge
     st.sidebar.markdown("### 📈 Market Sentiment")
     sentiment_value = st.sidebar.slider("Bull/Bear Indicator", 0, 100, 65)
     st.sidebar.markdown(f"""
@@ -1296,13 +1306,11 @@ def main():
     user_risk_profile = st.sidebar.select_slider("Your Risk Tolerance", options=["Conservative", "Moderate", "Aggressive"], value="Moderate")
     user_investment_goal = st.sidebar.selectbox("Primary Goal", ["Capital Growth", "Income", "Preservation"], index=0)
 
+    # Fetch stock data
     with st.spinner('Fetching market data...'):
         data = get_stock_data(ticker, start_date, end_date)
 
-    if data.empty:
-        st.error(f"No data available for {ticker}. Please try a different ticker.")
-        return
-
+    # Create tabs
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🏠 Home", "📈 Market Data", "🔮 Forecasting", "📰 Sentiment", 
         "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy"
@@ -1436,368 +1444,258 @@ def main():
     # Market Data Tab
     with tab2:
         st.markdown('<div class="subheader">Real-Time Market Data</div>', unsafe_allow_html=True)
-
-        if len(data) > 1 and 'Close' in data.columns:
-            # Ensure all values are scalars, not Series
-            current_price = float(data['Close'].iloc[-1])
-            prev_price = float(data['Close'].iloc[-2]) if len(data) >= 2 else current_price
-            volume = float(data['Volume'].iloc[-1]) if 'Volume' in data.columns else 0.0
-            daily_change = ((current_price - prev_price) / prev_price * 100) if float(prev_price) != 0 else 0.0
-            volatility = float(calculate_volatility(data))
-            annual_return = float(calculate_annual_return(data, start_date, end_date))
-
-            col1, col2, col3, col4 = st.columns(4)
-            col1.markdown(f'''
-                <div class="metric-card">
-                    <b>Current Price</b><br>${current_price:.2f}
-                </div>''', unsafe_allow_html=True)
-            col2.markdown(f'''
-                <div class="metric-card">
-                    <b>Daily Change</b><br>{daily_change:.2f}%
-                </div>''', unsafe_allow_html=True)
-            col3.markdown(f'''
-                <div class="metric-card">
-                    <b>Annual Volatility</b><br>{volatility:.2f}%
-                </div>''', unsafe_allow_html=True)
-            col4.markdown(f'''
-                <div class="metric-card">
-                    <b>Annual Return</b><br>{annual_return:.2f}%
-                </div>''', unsafe_allow_html=True)
-
+        
+        if data.empty:
+            st.error("No data available for analysis. Please select a different ticker or date range.")
+        else:
+            # Render metrics
+            render_metrics(data, ticker, start_date, end_date)
+            
             # Price Movement Chart
-            fig = go.Figure()
-            fig.add_trace(go.Candlestick(
-                x=data.index,
-                open=data['Open'],
-                high=data['High'],
-                low=data['Low'],
-                close=data['Close'],
-                name='Price'
-            ))
-            # Calculate moving averages
-            if len(data) > 20:
-                data['MA20'] = data['Close'].rolling(window=20).mean()
-                fig.add_trace(go.Scatter(
-                    x=data.index, y=data['MA20'],
-                    mode='lines', name='20-day MA',
-                    line=dict(color='orange', width=2)
+            if len(data) > 1 and 'Close' in data.columns:
+                fig = go.Figure()
+                fig.add_trace(go.Candlestick(
+                    x=data.index,
+                    open=data['Open'],
+                    high=data['High'],
+                    low=data['Low'],
+                    close=data['Close'],
+                    name='Price'
                 ))
-            if len(data) > 50:
-                data['MA50'] = data['Close'].rolling(window=50).mean()
-                fig.add_trace(go.Scatter(
-                    x=data.index, y=data['MA50'],
-                    mode='lines', name='50-day MA',
-                    line=dict(color='purple', width=2)
+                
+                # Calculate moving averages
+                if len(data) > 20:
+                    data['MA20'] = data['Close'].rolling(window=20).mean()
+                    fig.add_trace(go.Scatter(
+                        x=data.index, y=data['MA20'],
+                        mode='lines', name='20-day MA',
+                        line=dict(color='orange', width=2)
+                    ))
+                if len(data) > 50:
+                    data['MA50'] = data['Close'].rolling(window=50).mean()
+                    fig.add_trace(go.Scatter(
+                        x=data.index, y=data['MA50'],
+                        mode='lines', name='50-day MA',
+                        line=dict(color='purple', width=2)
+                    ))
+                    
+                fig.update_layout(
+                    title=f'{ticker} Price Movement',
+                    xaxis_title='Date',
+                    yaxis_title='Price ($)',
+                    template='plotly_dark',
+                    height=500
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Technical Indicators
+                st.subheader("Technical Indicators")
+                data = calculate_technical_indicators(data)
+
+                # Create subplots
+                fig_tech = go.Figure()
+                
+                # Price and MACD
+                fig_tech.add_trace(go.Scatter(
+                    x=data.index, y=data['Close'],
+                    mode='lines', name='Close',
+                    line=dict(color='#4F8BF9')
                 ))
-            fig.update_layout(
-                title=f'{ticker} Price Movement',
-                xaxis_title='Date',
-                yaxis_title='Price ($)',
-                template='plotly_dark',
-                height=500
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Technical Indicators
-            st.subheader("Technical Indicators")
-
-            # With this:
-            close_series = data['Close'].squeeze()  # Convert to 1D series
-            data['RSI'] = ta.momentum.RSIIndicator(close_series).rsi()
-            macd = ta.trend.MACD(close_series)
-            data['MACD'] = macd.macd_signal()
-            data['Signal'] = macd.macd()
-
-            # Create subplots
-            fig_tech = go.Figure()
-            
-            # Price and MACD
-            fig_tech.add_trace(go.Scatter(
-                x=data.index, y=data['Close'],
-                mode='lines', name='Close',
-                line=dict(color='#4F8BF9')
-            ))
-            
-            fig_tech.add_trace(go.Scatter(
-                x=data.index, y=data['MACD'],
-                mode='lines', name='MACD',
-                line=dict(color='#FFA500')
-            ))
-            
-            fig_tech.add_trace(go.Scatter(
-                x=data.index, y=data['Signal'],
-                mode='lines', name='Signal',
-                line=dict(color='#00FF00')
-            ))
-            
-            # RSI on secondary axis
-            fig_tech.add_trace(go.Scatter(
-                x=data.index, y=data['RSI'],
-                mode='lines', name='RSI',
-                line=dict(color='#FF00FF'),
-                yaxis='y2'
-            ))
-            
-            fig_tech.update_layout(
-                title='Technical Indicators',
-                xaxis_title='Date',
-                yaxis_title='Price/MACD',
-                yaxis2=dict(
-                    title='RSI',
-                    overlaying='y',
-                    side='right',
-                    range=[0, 100]
-                ),
-                template='plotly_dark',
-                height=500,
-                showlegend=True
-            )
-            
-            # Add overbought/oversold lines
-            fig_tech.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, yref="y2")
-            fig_tech.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, yref="y2")
-            
-            st.plotly_chart(fig_tech, use_container_width=True)
-            
-            # Options Analysis
-            st.subheader("Options Analysis")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("#### Call Option Payoff")
-                strike = st.slider("Strike Price", current_price * 0.8, current_price * 1.2, current_price * 1.05)
-                premium = st.slider("Premium", 0.5, 20.0, 2.5)
-                contracts = st.slider("Contracts", 1, 100, 1)
                 
-                prices, payoff = create_options_payoff(strike, premium, 'call', contracts)
-                fig_call = go.Figure()
-                fig_call.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Call Payoff'))
-                fig_call.update_layout(
-                    title='Call Option Payoff Diagram',
-                    xaxis_title='Stock Price',
-                    yaxis_title='Profit/Loss',
-                    template='plotly_dark'
+                fig_tech.add_trace(go.Scatter(
+                    x=data.index, y=data['MACD'],
+                    mode='lines', name='MACD',
+                    line=dict(color='#FFA500')
+                ))
+                
+                fig_tech.add_trace(go.Scatter(
+                    x=data.index, y=data['MACD_Signal'],
+                    mode='lines', name='Signal',
+                    line=dict(color='#00FF00')
+                ))
+                
+                # RSI on secondary axis
+                fig_tech.add_trace(go.Scatter(
+                    x=data.index, y=data['RSI'],
+                    mode='lines', name='RSI',
+                    line=dict(color='#FF00FF'),
+                    yaxis='y2'
+                ))
+                
+                fig_tech.update_layout(
+                    title='Technical Indicators',
+                    xaxis_title='Date',
+                    yaxis_title='Price/MACD',
+                    yaxis2=dict(
+                        title='RSI',
+                        overlaying='y',
+                        side='right',
+                        range=[0, 100]
+                    ),
+                    template='plotly_dark',
+                    height=500,
+                    showlegend=True
                 )
-                st.plotly_chart(fig_call, use_container_width=True)
                 
-            with col2:
-                st.markdown("#### Put Option Payoff")
-                strike_put = st.slider("Strike Price (Put)", current_price * 0.8, current_price * 1.2, current_price * 0.95)
-                premium_put = st.slider("Premium (Put)", 0.5, 20.0, 2.0)
+                # Add overbought/oversold lines
+                fig_tech.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, yref="y2")
+                fig_tech.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, yref="y2")
                 
-                prices, payoff_put = create_options_payoff(strike_put, premium_put, 'put', contracts)
-                fig_put = go.Figure()
-                fig_put.add_trace(go.Scatter(x=prices, y=payoff_put, mode='lines', name='Put Payoff'))
-                fig_put.update_layout(
-                    title='Put Option Payoff Diagram',
-                    xaxis_title='Stock Price',
-                    yaxis_title='Profit/Loss',
-                    template='plotly_dark'
-                )
-                st.plotly_chart(fig_put, use_container_width=True)
-            
-            # Institutional Activity
-            st.subheader("Institutional Activity")
-            inst_data = get_institutional_activity(ticker)
-            
-            fig_inst = px.bar(inst_data, x='Date', y='% Change', 
-                             color='% Change', 
-                             title='Institutional Position Changes',
-                             color_continuous_scale='RdYlGn')
-            st.plotly_chart(fig_inst, use_container_width=True)
-            
-            col_inst1, col_inst2 = st.columns(2)
-            with col_inst1:
-                st.metric("Total Shares Held", f"{inst_data['Shares Held'].iloc[-1]:,}")
-            with col_inst2:
-                st.metric("Number of Institutions", inst_data['Number of Institutions'].iloc[-1])
+                st.plotly_chart(fig_tech, use_container_width=True)
+                
+                # Options Analysis
+                st.subheader("Options Analysis")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("#### Call Option Payoff")
+                    strike = st.slider("Strike Price", current_price * 0.8, current_price * 1.2, current_price * 1.05)
+                    premium = st.slider("Premium", 0.5, 20.0, 2.5)
+                    contracts = st.slider("Contracts", 1, 100, 1)
+                    
+                    prices, payoff = create_options_payoff(strike, premium, 'call', contracts)
+                    fig_call = go.Figure()
+                    fig_call.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Call Payoff'))
+                    fig_call.update_layout(
+                        title='Call Option Payoff Diagram',
+                        xaxis_title='Stock Price',
+                        yaxis_title='Profit/Loss',
+                        template='plotly_dark'
+                    )
+                    st.plotly_chart(fig_call, use_container_width=True)
+                    
+                with col2:
+                    st.markdown("#### Put Option Payoff")
+                    strike_put = st.slider("Strike Price (Put)", current_price * 0.8, current_price * 1.2, current_price * 0.95)
+                    premium_put = st.slider("Premium (Put)", 0.5, 20.0, 2.0)
+                    
+                    prices, payoff_put = create_options_payoff(strike_put, premium_put, 'put', contracts)
+                    fig_put = go.Figure()
+                    fig_put.add_trace(go.Scatter(x=prices, y=payoff_put, mode='lines', name='Put Payoff'))
+                    fig_put.update_layout(
+                        title='Put Option Payoff Diagram',
+                        xaxis_title='Stock Price',
+                        yaxis_title='Profit/Loss',
+                        template='plotly_dark'
+                    )
+                    st.plotly_chart(fig_put, use_container_width=True)
+                
+                # Institutional Activity
+                st.subheader("Institutional Activity")
+                inst_data = get_institutional_activity(ticker)
+                
+                fig_inst = px.bar(inst_data, x='Date', y='% Change', 
+                                 color='% Change', 
+                                 title='Institutional Position Changes',
+                                 color_continuous_scale='RdYlGn')
+                st.plotly_chart(fig_inst, use_container_width=True)
+                
+                col_inst1, col_inst2 = st.columns(2)
+                with col_inst1:
+                    st.metric("Total Shares Held", f"{inst_data['Shares Held'].iloc[-1]:,}")
+                with col_inst2:
+                    st.metric("Number of Institutions", inst_data['Number of Institutions'].iloc[-1])
 
     # Forecasting Tab
     with tab3:
         st.markdown('<div class="subheader">Hybrid Prophet-TFT Forecasting</div>', unsafe_allow_html=True)
-        if len(data) < 90:  # Increased minimum data requirement
-            st.warning("Need at least 90 days of data for forecasting")
-            st.stop()
-
-        with st.spinner('Training forecasting models...'):
-            # Prophet Forecast with more conservative settings
-            prophet_df = data[['Close']].reset_index()
-            prophet_df.columns = ['ds', 'y']
-            model = Prophet(
-                daily_seasonality=False,
-                yearly_seasonality=True,
-                weekly_seasonality=True,
-                changepoint_prior_scale=0.01,
-                seasonality_prior_scale=5,
-                changepoint_range=0.8,
-                uncertainty_samples=100
-            )
+        
+        if data.empty:
+            st.error("No data available for forecasting. Please select a different ticker or date range.")
+        else:
             try:
-                model.fit(prophet_df)
-                future = model.make_future_dataframe(periods=forecast_days)
-                forecast = model.predict(future)
-                
-                st.subheader("Prophet Forecast")
-                fig1 = plot_plotly(model, forecast)
-                fig1.update_layout(
-                    height=500,
-                    template='plotly_dark',
-                    title=f"{ticker} Price Forecast",
-                    xaxis_title="Date",
-                    yaxis_title="Price"
-                )
-                st.plotly_chart(fig1, use_container_width=True)
-                
-                st.subheader("Forecast Components")
-                fig2 = plot_components_plotly(model, forecast)
-                st.plotly_chart(fig2, use_container_width=True)
-                
-                st.subheader("Forecast Summary")
-                forecast_cols = ['ds', 'yhat', 'yhat_lower', 'yhat_upper']
-                st.dataframe(forecast[forecast_cols].tail(10).rename(columns={
-                    'ds': 'Date', 'yhat': 'Forecast',
-                    'yhat_lower': 'Low', 'yhat_upper': 'High'
-                }).style.format({
-                    'Forecast': '{:.2f}', 'Low': '{:.2f}', 'High': '{:.2f}'
-                }))
-                
-                last_forecast = forecast.iloc[-1]
-                confidence_interval = last_forecast['yhat_upper'] - last_forecast['yhat_lower']
-                confidence_percent = min(100, max(0, 100 - (confidence_interval / last_forecast['yhat'] * 100)))
-                
-                st.metric("Forecast Confidence", f"{confidence_percent:.1f}%")
-                st.progress(int(confidence_percent))
-                
+                with st.spinner('Running Prophet forecast...'):
+                    forecast = prophet_forecast(data, forecast_days)
+                    
+                    st.subheader("Prophet Forecast")
+                    fig1 = plot_plotly(Prophet(), forecast)
+                    fig1.update_layout(
+                        height=500,
+                        template='plotly_dark',
+                        title=f"{ticker} Price Forecast",
+                        xaxis_title="Date",
+                        yaxis_title="Price"
+                    )
+                    st.plotly_chart(fig1, use_container_width=True)
+                    
+                    st.subheader("Forecast Components")
+                    fig2 = plot_components_plotly(Prophet(), forecast)
+                    st.plotly_chart(fig2, use_container_width=True)
+                    
             except Exception as e:
-                st.error(f"Forecasting error: {str(e)}")
+                st.error(f"Prophet forecasting error: {str(e)}")
             
-            # TFT Forecast
-            st.subheader("TFT Neural Network Forecast")
-            with st.spinner('Training TFT model...'):
-                tft_results = create_tft_model(data, forecast_days)
-            
-            fig_tft = go.Figure()
-            fig_tft.add_trace(go.Scatter(
-                x=data.index,
-                y=data['Close'],
-                mode='lines',
-                name='Actual Price',
-                line=dict(color='#4F8BF9')
-            ))
-            
-            last_date = data.index[-1]
-            forecast_dates = pd.date_range(start=last_date, periods=forecast_days+1)[1:]
-            
-            fig_tft.add_trace(go.Scatter(
-                x=forecast_dates,
-                y=tft_results['forecast'],
-                mode='lines',
-                name='TFT Forecast',
-                line=dict(color='#00FF00', width=3)
-            ))
-            
-            fig_tft.add_trace(go.Scatter(
-                x=forecast_dates,
-                y=tft_results['upper_band'],
-                mode='lines',
-                line=dict(width=0),
-                showlegend=False
-            ))
-            
-            fig_tft.add_trace(go.Scatter(
-                x=forecast_dates,
-                y=tft_results['lower_band'],
-                mode='lines',
-                fill='tonexty',
-                fillcolor='rgba(0, 255, 0, 0.2)',
-                line=dict(width=0),
-                name='Confidence Band'
-            ))
-            
-            fig_tft.update_layout(
-                title='TFT Price Forecast with Confidence Bands',
-                xaxis_title='Date',
-                yaxis_title='Price',
-                template='plotly_dark',
-                height=500
-            )
-            st.plotly_chart(fig_tft, use_container_width=True)
-            
-            col_tft1, col_tft2 = st.columns(2)
-            col_tft1.metric("Train RMSE", f"{tft_results['train_rmse']:.2f}")
-            col_tft2.metric("Test RMSE", f"{tft_results['test_rmse']:.2f}")
-            
-            st.subheader("TFT Forecast Values")
-            forecast_df = pd.DataFrame({
-                'Date': forecast_dates,
-                'Forecast': tft_results['forecast'],
-                'Upper Bound (P90)': tft_results['upper_band'],
-                'Lower Bound (P10)': tft_results['lower_band']
-            })
-            st.dataframe(forecast_df.style.format({
-                'Forecast': '{:.2f}',
-                'Upper Bound (P90)': '{:.2f}',
-                'Lower Bound (P10)': '{:.2f}'
-            }))
-            
-            # Feature Importance
-            st.subheader("Feature Importance")
-            with st.spinner('Calculating feature importance...'):
-                shap_results = calculate_feature_importance(data)
-                
-            if shap_results:
-                # Only include features that actually exist in the data
-                available_features = [f for f in shap_results['features'] if f in data.columns]
-
-                if available_features:
-                    st.markdown('<div class="shap-plot">', unsafe_allow_html=True)
-                    st.subheader("SHAP Feature Importance")
-                    fig_shap, ax = plt.subplots(figsize=(10, 6))
-    
-
-                    # Get the indices of available features in the original list
-                    feature_indices = [shap_results['features'].index(f) for f in available_features]
-
-                    # Filter SHAP values to only available features
-                    filtered_shap = shap_results['shap_values'][:, feature_indices]
-
-                    shap.summary_plot(filtered_shap,data[available_features],plot_type="bar",show=False)
-                    st.pyplot(fig_shap)
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                else:
-                    st.warning("No valid technical indicators available for SHAP analysis")
-
-            else:
-                st.warning("Insufficient data for feature importance analysis")
-                
-                   
-            # Attention Visualization
-            if 'attention' in tft_results and tft_results['attention'] is not None:
-                st.subheader("Attention Weights")
-                st.markdown('<div class="attention-heatmap">', unsafe_allow_html=True)
-                fig_attn = plot_attention_weights(tft_results['attention'])
-                st.pyplot(fig_attn)
-                st.markdown('</div>', unsafe_allow_html=True)
-                st.caption("Attention weights show which historical time steps the model focuses on when making predictions")
-            
-            st.markdown("""
-            <div class="feature-card">
-                <h4>Hybrid Forecast Insights</h4>
-                <p>The hybrid approach combines Prophet's seasonality modeling with TFT's temporal pattern recognition:</p>
-                <ul>
-                    <li><b>Prophet</b> excels at capturing trends and seasonality</li>
-                    <li><b>TFT</b> models complex temporal dependencies with attention mechanisms</li>
-                    <li>Combined forecasts provide robust probabilistic predictions</li>
-                    <li>Confidence bands represent forecast uncertainty ranges</li>
-                </ul>
-                <p><b>Note:</b> All forecasts are probabilistic estimates, not guarantees. Actual market movements may vary significantly.</p>
-            </div>
-            """, unsafe_allow_html=True)
-
+            try:
+                with st.spinner('Running TFT forecast...'):
+                    tft_results = tft_forecast(data, forecast_days)
+                    
+                    st.subheader("TFT Neural Network Forecast")
+                    fig_tft = go.Figure()
+                    fig_tft.add_trace(go.Scatter(
+                        x=data.index,
+                        y=data['Close'],
+                        mode='lines',
+                        name='Actual Price',
+                        line=dict(color='#4F8BF9')
+                    ))
+                    
+                    last_date = data.index[-1]
+                    forecast_dates = pd.date_range(start=last_date, periods=forecast_days+1)[1:]
+                    
+                    fig_tft.add_trace(go.Scatter(
+                        x=forecast_dates,
+                        y=tft_results['forecast'],
+                        mode='lines',
+                        name='TFT Forecast',
+                        line=dict(color='#00FF00', width=3)
+                    ))
+                    
+                    fig_tft.add_trace(go.Scatter(
+                        x=forecast_dates,
+                        y=tft_results['upper_band'],
+                        mode='lines',
+                        line=dict(width=0),
+                        showlegend=False
+                    ))
+                    
+                    fig_tft.add_trace(go.Scatter(
+                        x=forecast_dates,
+                        y=tft_results['lower_band'],
+                        mode='lines',
+                        fill='tonexty',
+                        fillcolor='rgba(0, 255, 0, 0.2)',
+                        line=dict(width=0),
+                        name='Confidence Band'
+                    ))
+                    
+                    fig_tft.update_layout(
+                        title='TFT Price Forecast with Confidence Bands',
+                        xaxis_title='Date',
+                        yaxis_title='Price',
+                        template='plotly_dark',
+                        height=500
+                    )
+                    st.plotly_chart(fig_tft, use_container_width=True)
+                    
+                    col_tft1, col_tft2 = st.columns(2)
+                    col_tft1.metric("Train RMSE", f"{tft_results['train_rmse']:.2f}")
+                    col_tft2.metric("Test RMSE", f"{tft_results['test_rmse']:.2f}")
+                    
+                    # Attention Visualization
+                    if 'attention' in tft_results and tft_results['attention'] is not None:
+                        st.subheader("Attention Weights")
+                        st.markdown('<div class="attention-heatmap">', unsafe_allow_html=True)
+                        fig_attn = plot_attention_weights(tft_results['attention'])
+                        st.pyplot(fig_attn)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        st.caption("Attention weights show which historical time steps the model focuses on when making predictions")
+                    
+            except Exception as e:
+                st.error(f"TFT forecasting error: {str(e)}")
 
     # Sentiment Analysis Tab
     with tab4:
         st.markdown('<div class="subheader">Sentiment Analysis</div>', unsafe_allow_html=True)
+        
         news_items = get_news(ticker)
 
         if not news_items:
@@ -1821,7 +1719,7 @@ def main():
                 try:
                     sentiments.extend(sentiment_model(batch))
                 except Exception as e:
-                    st.warning(f"Sentiment error: {str(e)}")
+                    logger.error(f"Sentiment error: {str(e)}")
                     # Add neutral sentiment as fallback
                     sentiments.extend([{'label': 'NEUTRAL', 'score': 0.5}] * len(batch))
             
@@ -1909,7 +1807,7 @@ def main():
         st.markdown('<div class="subheader">Portfolio Optimization</div>', unsafe_allow_html=True)
         portfolio_data = prepare_portfolio_data(portfolio_tickers, start_date, end_date)
 
-        if portfolio_data.empty or len(portfolio_data) < 30:
+        if portfolio_data.empty:
             st.warning("Insufficient data for portfolio optimization")
         else:
             # Calculate daily returns
