@@ -1,3 +1,19 @@
+import streamlit as st
+
+@st.cache_resource
+def load_clip_model():
+    # lazy import
+    import open_clip  # or import clip if using OpenAI CLIP
+    model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
+    return model, preprocess
+
+st.title("My App")
+if st.button("Use CLIP"):
+    with st.spinner("Loading model..."):
+        model, preprocess = load_clip_model()   # cached on first run
+        st.success("Model ready")
+
+
 import torch
 import streamlit as st
 import yfinance as yf
