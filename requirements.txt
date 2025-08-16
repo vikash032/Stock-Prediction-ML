@@ -21,4 +21,5 @@ optuna
 redis
 schedule
 mlflow
-faiss
+faiss-cpu
+
