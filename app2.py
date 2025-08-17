@@ -32,6 +32,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import calendar
+from transformers import pipeline  # Added missing import
+from sklearn.linear_model import LinearRegression  # Added missing import
 
 # ------------------ CONFIGURATION ------------------
 # Initialize logging
@@ -115,7 +117,7 @@ def calculate_technical_indicators(data):
     
     # Bollinger Bands
     try:
-        bollinger = ta.volatility.BollingerBands(close_series, window=20, window_dev=2)
+        bollinger = ta.volatility.BollingerBonds(close_series, window=20, window_dev=2)
         data['BB_Upper'] = bollinger.bollinger_hband()
         data['BB_Lower'] = bollinger.bollinger_lband()
         data['BB_Width'] = bollinger.bollinger_hband() - bollinger.bollinger_lband()
@@ -138,9 +140,22 @@ def calculate_technical_indicators(data):
 # Module 3: Sentiment Analysis
 @st.cache_resource(show_spinner=False)
 def load_sentiment_model():
-    """Load and cache the sentiment analysis model"""
+    """Load and cache the sentiment analysis model with fallbacks"""
     logger.info("Loading sentiment model")
-    return pipeline("sentiment-analysis", model="ProsusAI/finbert")
+    try:
+        # Try to load the finbert model
+        return pipeline("sentiment-analysis", model="ProsusAI/finbert")
+    except Exception as e:
+        logger.error(f"Failed to load finbert model: {str(e)}")
+        # Fallback to another financial sentiment model
+        logger.info("Using alternative financial sentiment model")
+        try:
+            return pipeline("sentiment-analysis", model="mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis")
+        except Exception as e2:
+            logger.error(f"Failed to load alternative model: {str(e2)}")
+            # Fallback to a general sentiment model
+            logger.info("Using general sentiment model as fallback")
+            return pipeline("sentiment-analysis")
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_news(ticker):
@@ -1458,7 +1473,11 @@ def main():
     
     # Alert system
     st.sidebar.markdown("### 🔔 Custom Alerts")
-    current_price = yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1] if yf.Ticker(ticker).history(period="1d") is not None else 100
+    # Get current price safely
+    try:
+        current_price = yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1]
+    except:
+        current_price = 100
     price_alert = st.sidebar.number_input("Price Alert Threshold", value=current_price*1.1)
     if st.sidebar.button("Set Price Alert"):
         st.sidebar.success(f"Alert set for {ticker} at ${price_alert:.2f}")
