@@ -222,14 +222,16 @@ def get_news(ticker):
         return []
 
 # Module 4: Forecasting - FIXED MERGE ISSUE
+# Module 4: Forecasting - FIXED MERGE ISSUE AND SERIES TRUTH VALUE ERROR
 def prophet_forecast(data, forecast_days, country='IN'):
     """Perform time series forecasting using Prophet with holidays and technical indicators"""
+    # Validate data more robustly
     if len(data) < 90:
-        raise ValueError("Need at least 90 days of data for forecasting")
+        raise ValueError(f"Need at least 90 days of data for forecasting, got {len(data)}")
     
-    # Validate required columns
-    if 'Close' not in data.columns:
-        raise ValueError("Missing 'Close' column in data")
+    # Explicitly check for required columns
+    if 'Close' not in data.columns or data['Close'].empty:
+        raise ValueError("Missing or empty 'Close' column in data")
     
     # Create holiday dataframe for the country
     years = pd.date_range(start=data.index.min(), end=data.index.max() + timedelta(days=forecast_days)).year
@@ -239,6 +241,11 @@ def prophet_forecast(data, forecast_days, country='IN'):
     
     # Create a copy with reset index for merging
     data_reset = data.reset_index()
+    
+    # Validate data_reset before proceeding
+    if data_reset.empty or 'Date' not in data_reset.columns or 'Close' not in data_reset.columns:
+        raise ValueError("Invalid data structure after reset")
+    
     prophet_df = data_reset[['Date', 'Close']].copy()
     prophet_df.columns = ['ds', 'y']
     
@@ -261,20 +268,35 @@ def prophet_forecast(data, forecast_days, country='IN'):
     
     # Add technical indicators as regressors - FIXED MERGE
     tech_indicators = ['SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Hist', 'BB_Width', 'Volatility']
+    
+    # Validate indicators exist before adding
     for indicator in tech_indicators:
         if indicator in data_reset.columns:
-            # Directly assign from the reset DataFrame to ensure alignment
-            prophet_df[indicator] = data_reset[indicator]
-            model.add_regressor(indicator)
+            # Ensure we have valid numerical data
+            if not data_reset[indicator].isnull().all() and not data_reset[indicator].empty:
+                prophet_df[indicator] = data_reset[indicator].astype(float)
+                model.add_regressor(indicator)
+            else:
+                logger.warning(f"Skipping invalid indicator: {indicator}")
+    
+    # Drop any remaining NA values
+    prophet_df = prophet_df.dropna()
+    
+    # Final validation before fitting
+    if len(prophet_df) < 30:
+        raise ValueError(f"Insufficient data after cleaning for forecasting: {len(prophet_df)} rows")
     
     model.fit(prophet_df)
     future = model.make_future_dataframe(periods=forecast_days)
     
     # Add future technical indicators (using the last known values as placeholders)
     for indicator in tech_indicators:
-        if indicator in data_reset.columns:
+        if indicator in data_reset.columns and not data_reset[indicator].empty:
             last_value = data_reset[indicator].iloc[-1]
-            future[indicator] = last_value
+            # Ensure we're using scalar values
+            if isinstance(last_value, pd.Series):
+                last_value = last_value.values[0]
+            future[indicator] = float(last_value)
     
     forecast = model.predict(future)
     return model, forecast
@@ -1850,8 +1872,11 @@ def main():
                     with st.spinner('Running hybrid forecast...'):
                         forecast_results = hybrid_forecast(data, forecast_days)
                         
+                # FIXED: Ensure we have valid data to plot
+                if 'forecast' in forecast_results and len(forecast_results['forecast']) > 0:
                     st.subheader("Hybrid Forecast")
-                    fig = go.Figure()
+                    fig = go.Figure()                        
+                   
                     
                     # Historical data (last 180 days)
                     historical = data['Close'].iloc[-180:]
@@ -1867,14 +1892,15 @@ def main():
                     last_date = data.index[-1]
                     forecast_dates = pd.date_range(start=last_date, periods=forecast_days+1)[1:]
                     
-                    # Forecast line
-                    fig.add_trace(go.Scatter(
-                        x=forecast_dates,
-                        y=forecast_results['forecast'],
-                        mode='lines',
-                        name='Forecast',
-                        line=dict(color='#00FF00', width=3)
-                    ))
+                    # Forecast line - FIXED: Ensure we have matching lengths
+                    if len(forecast_dates) == len(forecast_results['forecast']):
+                        fig.add_trace(go.Scatter(
+                            x=forecast_dates,
+                            y=forecast_results['forecast'],
+                            mode='lines',
+                            name='Forecast',
+                            line=dict(color='#00FF00', width=3)
+                        ))
                     
                     # Confidence band (single band)
                     fig.add_trace(go.Scatter(
@@ -1996,6 +2022,7 @@ def main():
             
             except Exception as e:
                 st.error(f"Forecasting error: {str(e)}")
+                st.error("Please try a different date range or stock ticker")
 
     # Sentiment Analysis Tab
     with tab4:
