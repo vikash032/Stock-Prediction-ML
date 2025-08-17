@@ -2054,7 +2054,7 @@ def main():
                 st.error(f"TFT forecasting error: {str(e)}")
             
             # Ensemble Forecasting (only if both succeeded)
-            if enable_ensemble and prophet_success and tft_success:
+            if locals().get('enable_ensemble', False) and prophet_success and tft_success:
                 try:
                     with st.spinner('Combining forecasts with ensemble model...'):
                         combined_forecast, prophet_weight, tft_weight = ensemble_forecast(
