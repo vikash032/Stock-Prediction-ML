@@ -32,8 +32,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import calendar
-from transformers import pipeline  # Added missing import
-from sklearn.linear_model import LinearRegression  # Added missing import
+from transformers import pipeline
+from sklearn.linear_model import LinearRegression
 
 # ------------------ CONFIGURATION ------------------
 # Initialize logging
@@ -87,7 +87,7 @@ def get_stock_data(ticker, start, end):
 # Module 2: Technical Analysis
 def calculate_technical_indicators(data):
     """Calculate various technical indicators for stock data"""
-    if 'Close' not in data.columns or len(data) < 20:
+    if 'Close' not in data.columns or len(data) < 50:  # Increased minimum data requirement
         return data
     
     close_series = data['Close'].squeeze()
@@ -115,9 +115,9 @@ def calculate_technical_indicators(data):
     except Exception as e:
         logger.error(f"Error calculating MACD: {str(e)}")
     
-    # Bollinger Bands
+    # Bollinger Bands (fixed typo)
     try:
-        bollinger = ta.volatility.BollingerBonds(close_series, window=20, window_dev=2)
+        bollinger = ta.volatility.BollingerBands(close_series, window=20, window_dev=2)
         data['BB_Upper'] = bollinger.bollinger_hband()
         data['BB_Lower'] = bollinger.bollinger_lband()
         data['BB_Width'] = bollinger.bollinger_hband() - bollinger.bollinger_lband()
@@ -227,6 +227,10 @@ def prophet_forecast(data, forecast_days, country='IN'):
     if len(data) < 90:
         raise ValueError("Need at least 90 days of data for forecasting")
     
+    # Validate required columns
+    if 'Close' not in data.columns:
+        raise ValueError("Missing 'Close' column in data")
+    
     # Create holiday dataframe for the country
     years = pd.date_range(start=data.index.min(), end=data.index.max() + timedelta(days=forecast_days)).year
     all_years = list(range(min(years), max(years)+1))
@@ -257,7 +261,8 @@ def prophet_forecast(data, forecast_days, country='IN'):
     tech_indicators = ['SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Hist', 'BB_Width', 'Volatility']
     for indicator in tech_indicators:
         if indicator in data.columns:
-            prophet_df[indicator] = data[indicator].values
+            # Merge indicators ensuring proper index alignment
+            prophet_df = prophet_df.merge(data[[indicator]], left_index=True, right_index=True, how='left')
             model.add_regressor(indicator)
     
     model.fit(prophet_df)
@@ -277,6 +282,10 @@ def linear_trend_plus_volatility(data, forecast_days):
     if len(data) < 60:
         raise ValueError("Need at least 60 days of data for forecasting")
     
+    # Validate required columns
+    if 'Close' not in data.columns:
+        raise ValueError("Missing 'Close' column in data")
+    
     # Prepare data
     df = data[['Close']].copy()
     df['log_close'] = np.log(df['Close'])
@@ -286,6 +295,10 @@ def linear_trend_plus_volatility(data, forecast_days):
     df['returns'] = df['Close'].pct_change()
     df['volatility'] = df['returns'].rolling(window=20).std()
     df = df.dropna()
+    
+    # Check data after cleaning
+    if len(df) < 30:
+        raise ValueError("Insufficient data after cleaning for forecasting")
     
     # Train linear model
     X = df[['trend', 'volatility']].values
@@ -424,7 +437,7 @@ def optimize_portfolio(returns, risk_tolerance):
         logger.error(f"Optimization failed: {str(e)}")
         return np.ones(n) / n
 
-# Module 6: Backtesting
+# Module 6: Backtesting (FIXED)
 def backtest_strategy(data, strategy, params):
     """Backtest a trading strategy with realistic simulation"""
     if len(data) < 100:
@@ -432,7 +445,8 @@ def backtest_strategy(data, strategy, params):
             'return': 0,
             'drawdown': 0,
             'sharpe': 0,
-            'trades': 0
+            'trades': 0,
+            'portfolio': pd.Series([10000])
         }
     
     # Initialize portfolio
@@ -453,7 +467,8 @@ def backtest_strategy(data, strategy, params):
                 'return': 0,
                 'drawdown': 0,
                 'sharpe': 0,
-                'trades': 0
+                'trades': 0,
+                'portfolio': pd.Series([10000])
             }
             
         # Calculate moving averages
@@ -469,7 +484,7 @@ def backtest_strategy(data, strategy, params):
         signal = 0
         
         if strategy == "Moving Average Crossover":
-            # FIX: Convert to scalar values for comparison
+            # Convert to scalar values for comparison
             sma_short_prev = float(data['SMA_short'].iloc[i-1])
             sma_long_prev = float(data['SMA_long'].iloc[i-1])
             sma_short_current = float(data['SMA_short'].iloc[i])
@@ -480,14 +495,14 @@ def backtest_strategy(data, strategy, params):
             elif sma_short_prev > sma_long_prev and sma_short_current < sma_long_current:
                 signal = -1  # Death cross - sell
         
-        # Execute trades - FIX: Ensure position is scalar
+        # Execute trades - position is scalar
         if signal == 1 and cash > 0:
             # Buy with all cash
             shares = cash // price
             position += shares
             cash -= shares * price
             trades.append(('buy', data.index[i], price, shares))
-        elif signal == -1 and position > 0:  # Now position is scalar
+        elif signal == -1 and position > 0:
             # Sell all position
             cash += position * price
             trades.append(('sell', data.index[i], price, position))
@@ -498,6 +513,15 @@ def backtest_strategy(data, strategy, params):
     
     # Calculate performance metrics
     portfolio = pd.Series(portfolio_value)
+    if len(portfolio) < 2:
+        return {
+            'return': 0,
+            'drawdown': 0,
+            'sharpe': 0,
+            'trades': len(trades),
+            'portfolio': portfolio
+        }
+        
     returns = portfolio.pct_change().dropna()
     total_return = (portfolio.iloc[-1] / portfolio.iloc[0] - 1) * 100
     
@@ -1472,7 +1496,6 @@ def main():
     ticker = st.sidebar.selectbox("📊 Select Stock", default_tickers, index=0)
     start_date = st.sidebar.date_input("📅 Start Date", datetime.now() - timedelta(days=365))
     end_date = st.sidebar.date_input("📅 End Date", datetime.now())
-    # Changed max forecast days to 90
     forecast_days = st.sidebar.slider("🔮 Forecast Days", 30, 90, 60)
     risk_tolerance = st.sidebar.slider("⚠️ Risk Tolerance (1=Low, 10=High)", 1, 10, 5)
     portfolio_size = st.sidebar.number_input("💰 Portfolio Size ($)", 10000, 1000000, 50000)
@@ -1517,6 +1540,14 @@ def main():
     # Fetch stock data
     with st.spinner('Fetching market data...'):
         data = get_stock_data(ticker, start_date, end_date)
+        
+    # Safety check for valid data
+    if data.empty or 'Close' not in data.columns:
+        st.error("No valid data available for analysis. Please select a different ticker or date range.")
+        return  # Exit early to prevent downstream errors
+
+    # Calculate technical indicators
+    data = calculate_technical_indicators(data)
 
     # Create tabs
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
@@ -1697,7 +1728,6 @@ def main():
 
                 # Technical Indicators
                 st.subheader("Technical Indicators")
-                data = calculate_technical_indicators(data)
 
                 # Create subplots
                 fig_tech = go.Figure()
@@ -1709,25 +1739,28 @@ def main():
                     line=dict(color='#4F8BF9')
                 ))
                 
-                fig_tech.add_trace(go.Scatter(
-                    x=data.index, y=data['MACD'],
-                    mode='lines', name='MACD',
-                    line=dict(color='#FFA500')
-                ))
+                if 'MACD' in data.columns:
+                    fig_tech.add_trace(go.Scatter(
+                        x=data.index, y=data['MACD'],
+                        mode='lines', name='MACD',
+                        line=dict(color='#FFA500')
+                    ))
                 
-                fig_tech.add_trace(go.Scatter(
-                    x=data.index, y=data['MACD_Signal'],
-                    mode='lines', name='Signal',
-                    line=dict(color='#00FF00')
-                ))
+                if 'MACD_Signal' in data.columns:
+                    fig_tech.add_trace(go.Scatter(
+                        x=data.index, y=data['MACD_Signal'],
+                        mode='lines', name='Signal',
+                        line=dict(color='#00FF00')
+                    ))
                 
                 # RSI on secondary axis
-                fig_tech.add_trace(go.Scatter(
-                    x=data.index, y=data['RSI'],
-                    mode='lines', name='RSI',
-                    line=dict(color='#FF00FF'),
-                    yaxis='y2'
-                ))
+                if 'RSI' in data.columns:
+                    fig_tech.add_trace(go.Scatter(
+                        x=data.index, y=data['RSI'],
+                        mode='lines', name='RSI',
+                        line=dict(color='#FF00FF'),
+                        yaxis='y2'
+                    ))
                 
                 fig_tech.update_layout(
                     title='Technical Indicators',
@@ -2411,36 +2444,40 @@ def main():
                 yaxis='y'
             ))
             
-            fig_backtest.add_trace(go.Scatter(
-                x=data.index[params.get('long_window', 50):],
-                y=results['portfolio'],
-                mode='lines',
-                name='Portfolio Value',
-                line=dict(color='#00FF00'),
-                yaxis='y2'
-            ))
+            if 'portfolio' in results and len(results['portfolio']) > 0:
+                fig_backtest.add_trace(go.Scatter(
+                    x=data.index[params.get('long_window', 50):][:len(results['portfolio'])],
+                    y=results['portfolio'],
+                    mode='lines',
+                    name='Portfolio Value',
+                    line=dict(color='#00FF00'),
+                    yaxis='y2'
+                ))
             
             # Add trade markers
-            buy_dates = [t[1] for t in results['trades'] if t[0] == 'buy']
-            buy_prices = [t[2] for t in results['trades'] if t[0] == 'buy']
-            sell_dates = [t[1] for t in results['trades'] if t[0] == 'sell']
-            sell_prices = [t[2] for t in results['trades'] if t[0] == 'sell']
-            
-            fig_backtest.add_trace(go.Scatter(
-                x=buy_dates,
-                y=buy_prices,
-                mode='markers',
-                name='Buy',
-                marker=dict(color='green', size=10, symbol='triangle-up')
-            ))
-            
-            fig_backtest.add_trace(go.Scatter(
-                x=sell_dates,
-                y=sell_prices,
-                mode='markers',
-                name='Sell',
-                marker=dict(color='red', size=10, symbol='triangle-down')
-            ))
+            if 'trades' in results:
+                buy_dates = [t[1] for t in results['trades'] if t[0] == 'buy']
+                buy_prices = [t[2] for t in results['trades'] if t[0] == 'buy']
+                sell_dates = [t[1] for t in results['trades'] if t[0] == 'sell']
+                sell_prices = [t[2] for t in results['trades'] if t[0] == 'sell']
+                
+                if buy_dates:
+                    fig_backtest.add_trace(go.Scatter(
+                        x=buy_dates,
+                        y=buy_prices,
+                        mode='markers',
+                        name='Buy',
+                        marker=dict(color='green', size=10, symbol='triangle-up')
+                    ))
+                
+                if sell_dates:
+                    fig_backtest.add_trace(go.Scatter(
+                        x=sell_dates,
+                        y=sell_prices,
+                        mode='markers',
+                        name='Sell',
+                        marker=dict(color='red', size=10, symbol='triangle-down')
+                    ))
             
             fig_backtest.update_layout(
                 title=f'{strategy} Performance',
@@ -2459,7 +2496,7 @@ def main():
             st.plotly_chart(fig_backtest, use_container_width=True)
             
             # Trade log
-            if results['trades']:
+            if 'trades' in results and results['trades']:
                 st.subheader("Trade Log")
                 trades_df = pd.DataFrame(results['trades'], columns=['Action', 'Date', 'Price', 'Shares'])
                 st.dataframe(trades_df)
