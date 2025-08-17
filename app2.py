@@ -1923,10 +1923,8 @@ def main():
                 with col_inst2:
                     st.metric("Number of Institutions", inst_data['Number of Institutions'].iloc[-1])
 
+
     # Forecasting Tab
-    with tab3:
-        st.markdown('<div class="subheader">Hybrid Prophet-TFT Forecasting</div>', unsafe_allow_html=True)
-            # Forecasting Tab
     with tab3:
         st.markdown('<div class="subheader">Hybrid Prophet-TFT Forecasting</div>', unsafe_allow_html=True)
         
@@ -1937,6 +1935,7 @@ def main():
         if data.empty:
             st.error("No data available for forecasting. Please select a different ticker or date range.")
         else:
+            # Prophet forecasting
             try:
                 with st.spinner('Running Prophet forecast with technical indicators...'):
                     prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
@@ -1975,6 +1974,7 @@ def main():
             except Exception as e:
                 st.error(f"Prophet forecasting error: {str(e)}")
             
+            # TFT forecasting
             try:
                 with st.spinner('Running TFT forecast with hyperparameter tuning...'):
                     tft_results = tft_forecast(data, forecast_days, tune=tune_hyperparams)
@@ -2053,7 +2053,7 @@ def main():
             except Exception as e:
                 st.error(f"TFT forecasting error: {str(e)}")
             
-            # Ensemble Forecasting
+            # Ensemble Forecasting (only if both succeeded)
             if enable_ensemble and prophet_success and tft_success:
                 try:
                     with st.spinner('Combining forecasts with ensemble model...'):
@@ -2103,6 +2103,7 @@ def main():
                 
                 except Exception as e:
                     st.error(f"Ensemble forecasting error: {str(e)}")
+
 
 
     # Sentiment Analysis Tab
