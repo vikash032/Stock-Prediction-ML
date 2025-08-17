@@ -7,7 +7,6 @@ import plotly.graph_objects as go
 import plotly.express as px
 from prophet import Prophet
 from prophet.plot import plot_plotly, plot_components_plotly
-from transformers import pipeline
 from datetime import datetime, timedelta
 import cvxpy as cp
 from sklearn.preprocessing import MinMaxScaler
@@ -18,48 +17,21 @@ import re
 import ta
 import warnings
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.optimizers import Adam
 import time
 import random
-from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
-from pytorch_forecasting.data import GroupNormalizer
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping
+import logging
+from dotenv import load_dotenv
+import holidays
+import json
 import shap
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
-import logging
-from dotenv import load_dotenv
 from scipy.optimize import minimize
-import holidays
-import json
-from sklearn.model_selection import TimeSeriesSplit
-from pytorch_forecasting.metrics import QuantileLoss
-from pytorch_forecasting.models.temporal_fusion_transformer.tuning import optimize_hyperparameters
-import optuna
 import redis
-import schedule
-import threading
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import calendar
-import faiss
-import mlflow
-from mlflow.tracking import MlflowClient
-from PIL import Image
-import torchvision.models as models
-import torchvision.transforms as transforms
-import librosa
-import soundfile as sf
-from scipy.spatial.distance import cdist
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics.pairwise import cosine_similarity
-from scipy import stats
-import uuid
-import dvc.api
 
 # ------------------ CONFIGURATION ------------------
 # Initialize logging
@@ -82,292 +54,6 @@ st.set_page_config(
 
 # Auto-refresh every 2 minutes
 st_autorefresh(interval=120000, key="data_refresh")
-
-# ------------------ NEW FEATURES ------------------
-class EmbeddingManager:
-    def __init__(self):
-        self.redis = redis.Redis(
-            host=os.getenv('REDIS_HOST', 'localhost'),
-            port=os.getenv('REDIS_PORT', 6379),
-            password=os.getenv('REDIS_PASSWORD', ''),
-            decode_responses=False
-        )
-        self.index = None
-        self.dim = 768  # BERT embedding dimension
-        self.load_index()
-        self.start_update_scheduler()
-
-    def load_index(self):
-        try:
-            index_bytes = self.redis.get("faiss_index")
-            if index_bytes:
-                self.index = faiss.deserialize_index(index_bytes)
-                logger.info("Loaded FAISS index from Redis")
-            else:
-                self.index = faiss.IndexFlatL2(self.dim)
-                logger.info("Created new FAISS index")
-        except Exception as e:
-            logger.error(f"Error loading FAISS index: {str(e)}")
-            self.index = faiss.IndexFlatL2(self.dim)
-
-    def save_index(self):
-        try:
-            index_bytes = faiss.serialize_index(self.index)
-            self.redis.set("faiss_index", index_bytes)
-            logger.info("Saved FAISS index to Redis")
-        except Exception as e:
-            logger.error(f"Error saving FAISS index: {str(e)}")
-
-    def update_embeddings(self, embeddings, ids):
-        try:
-            if not isinstance(embeddings, np.ndarray):
-                embeddings = np.array(embeddings).astype('float32')
-            self.index.add(embeddings)
-            
-            # Store mapping in Redis
-            for idx, emb_id in enumerate(ids):
-                self.redis.set(f"embedding:{emb_id}", embeddings[idx].tobytes())
-            self.save_index()
-            logger.info(f"Updated embeddings for {len(ids)} items")
-        except Exception as e:
-            logger.error(f"Error updating embeddings: {str(e)}")
-
-    def search(self, query_embedding, k=5):
-        try:
-            if not isinstance(query_embedding, np.ndarray):
-                query_embedding = np.array([query_embedding]).astype('float32')
-            distances, indices = self.index.search(query_embedding, k)
-            return distances[0], indices[0]
-        except Exception as e:
-            logger.error(f"Search error: {str(e)}")
-            return [], []
-
-    def start_update_scheduler(self):
-        def update_job():
-            logger.info("Running scheduled embedding update...")
-            # Placeholder for actual embedding update logic
-            # In real implementation, this would fetch new data and update embeddings
-            
-        schedule.every(30).minutes.do(update_job)
-        
-        def run_scheduler():
-            while True:
-                schedule.run_pending()
-                time.sleep(60)
-                
-        thread = threading.Thread(target=run_scheduler, daemon=True)
-        thread.start()
-        logger.info("Started embedding update scheduler")
-
-class ABTesting:
-    def __init__(self):
-        self.experiments = {}
-        self.redis = redis.Redis(
-            host=os.getenv('REDIS_HOST', 'localhost'),
-            port=os.getenv('REDIS_PORT', 6379),
-            password=os.getenv('REDIS_PASSWORD', ''),
-            decode_responses=True
-        )
-        
-    def create_experiment(self, name, variants, metrics):
-        exp_id = f"exp_{name}_{int(time.time())}"
-        self.experiments[exp_id] = {
-            'name': name,
-            'variants': variants,
-            'metrics': metrics,
-            'start_time': datetime.now(),
-            'assignments': {},
-            'results': {v: {m: [] for m in metrics} for v in variants}
-        }
-        self.redis.set(f"experiment:{exp_id}", json.dumps(self.experiments[exp_id]))
-        return exp_id
-        
-    def assign_variant(self, exp_id, user_id):
-        variants = self.experiments[exp_id]['variants']
-        variant = random.choice(variants)
-        self.experiments[exp_id]['assignments'][user_id] = variant
-        self.redis.set(f"experiment:{exp_id}:assign:{user_id}", variant)
-        return variant
-        
-    def track_metric(self, exp_id, user_id, metric, value):
-        variant = self.redis.get(f"experiment:{exp_id}:assign:{user_id}")
-        if variant and exp_id in self.experiments:
-            self.experiments[exp_id]['results'][variant][metric].append(value)
-            self.redis.rpush(f"experiment:{exp_id}:results:{variant}:{metric}", value)
-            
-    def calculate_lift(self, exp_id, metric):
-        results = {}
-        for variant in self.experiments[exp_id]['variants']:
-            values = [float(v) for v in self.redis.lrange(
-                f"experiment:{exp_id}:results:{variant}:{metric}", 0, -1
-            )]
-            if values:
-                results[variant] = {
-                    'mean': np.mean(values),
-                    'std': np.std(values),
-                    'count': len(values)
-                }
-                
-        if len(results) < 2:
-            return None
-            
-        variants = list(results.keys())
-        lift = {}
-        for i in range(1, len(variants)):
-            control = results[variants[0]]
-            treatment = results[variants[i]]
-            
-            # Calculate lift percentage
-            lift_percent = ((treatment['mean'] - control['mean']) / control['mean']) * 100
-            
-            # Calculate statistical significance
-            t_stat, p_value = stats.ttest_ind_from_stats(
-                control['mean'], control['std'], control['count'],
-                treatment['mean'], treatment['std'], treatment['count']
-            )
-            
-            lift[f"{variants[i]}_vs_{variants[0]}"] = {
-                'lift_percent': lift_percent,
-                'p_value': p_value,
-                'significant': p_value < 0.05
-            }
-            
-        return lift
-
-class ContextualBandit:
-    def __init__(self, n_arms, context_dim, alpha=0.1):
-        self.n_arms = n_arms
-        self.context_dim = context_dim
-        self.alpha = alpha
-        
-        # Initialize model parameters
-        self.A = [np.eye(context_dim) for _ in range(n_arms)]
-        self.b = [np.zeros((context_dim, 1)) for _ in range(n_arms)]
-        self.theta = [np.zeros((context_dim, 1)) for _ in range(n_arms)]
-        
-    def select_arm(self, context):
-        context = np.array(context).reshape(-1, 1)
-        max_ucb = -np.inf
-        best_arm = 0
-        
-        for arm in range(self.n_arms):
-            theta = self.theta[arm]
-            A_inv = np.linalg.inv(self.A[arm])
-            
-            # Calculate UCB
-            mean = theta.T.dot(context)[0][0]
-            std = np.sqrt(context.T.dot(A_inv).dot(context))[0][0]
-            ucb = mean + self.alpha * std
-            
-            if ucb > max_ucb:
-                max_ucb = ucb
-                best_arm = arm
-                
-        return best_arm
-        
-    def update(self, arm, context, reward):
-        context = np.array(context).reshape(-1, 1)
-        
-        # Update parameters
-        self.A[arm] += context.dot(context.T)
-        self.b[arm] += reward * context
-        
-        # Recompute theta
-        self.theta[arm] = np.linalg.inv(self.A[arm]).dot(self.b[arm])
-
-class DiversityOptimizer:
-    def __init__(self, lambda_param=0.7):
-        self.lambda_param = lambda_param
-        
-    def mmr(self, query_embedding, item_embeddings, k=5):
-        """
-        Maximal Marginal Relevance (MMR) for diversity
-        """
-        selected = []
-        remaining = list(range(len(item_embeddings)))
-        
-        # Start with item most similar to query
-        sims = cosine_similarity([query_embedding], item_embeddings)[0]
-        first = np.argmax(sims)
-        selected.append(first)
-        remaining.remove(first)
-        
-        while len(selected) < min(k, len(item_embeddings)):
-            mmr_scores = []
-            for i in remaining:
-                sim_query = cosine_similarity([query_embedding], [item_embeddings[i]])[0][0]
-                sim_selected = 0
-                if selected:
-                    sim_selected = max(
-                        cosine_similarity([item_embeddings[i]], [item_embeddings[j]])[0][0] 
-                        for j in selected
-                    )
-                mmr_score = self.lambda_param * sim_query - (1 - self.lambda_param) * sim_selected
-                mmr_scores.append(mmr_score)
-                
-            next_idx = remaining[np.argmax(mmr_scores)]
-            selected.append(next_idx)
-            remaining.remove(next_idx)
-            
-        return selected
-        
-    def diversity_penalty(self, embeddings, penalty_strength=0.3):
-        """
-        Add diversity penalty to similarity scores
-        """
-        sim_matrix = cosine_similarity(embeddings)
-        np.fill_diagonal(sim_matrix, 0)
-        diversity_scores = 1 - np.mean(sim_matrix, axis=1)
-        return penalty_strength * diversity_scores
-
-class MultiModalProcessor:
-    def __init__(self):
-        self.image_model = models.resnet50(pretrained=True)
-        self.image_model.eval()
-        self.transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                                std=[0.229, 0.224, 0.225])
-        ])
-        
-    def process_image(self, image_path):
-        try:
-            image = Image.open(image_path)
-            image = self.transform(image).unsqueeze(0)
-            with torch.no_grad():
-                embedding = self.image_model(image)
-            return embedding.numpy().flatten()
-        except Exception as e:
-            logger.error(f"Image processing error: {str(e)}")
-            return np.zeros(1000)  # ResNet50 output size
-            
-    def process_audio(self, audio_path):
-        try:
-            y, sr = librosa.load(audio_path, sr=16000)
-            mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
-            return np.mean(mfcc, axis=1)
-        except Exception as e:
-            logger.error(f"Audio processing error: {str(e)}")
-            return np.zeros(20)
-            
-    def fuse_modalities(self, text_emb, image_emb, audio_emb):
-        # Simple concatenation fusion
-        fused = np.concatenate([text_emb, image_emb, audio_emb])
-        return fused
-
-# Initialize new systems
-embedding_manager = EmbeddingManager()
-ab_testing = ABTesting()
-bandit = ContextualBandit(n_arms=3, context_dim=5)  # 3 arms: Prophet, TFT, Ensemble
-diversity_optimizer = DiversityOptimizer()
-multi_modal_processor = MultiModalProcessor()
-
-# MLflow setup
-mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000"))
-mlflow_client = MlflowClient()
-MODEL_REGISTRY_NAME = "stock_forecast_models"
 
 # ------------------ MODULES ------------------
 # Module 1: Data Fetching
@@ -513,8 +199,7 @@ def get_news(ticker):
                 "summary": a.get("description", ""),
                 "link": a.get("url", ""),
                 "date": a.get("publishedAt", ""),
-                "source": a.get("source", {}).get("name", ""),
-                "id": str(uuid.uuid4())  # Add unique ID for embedding
+                "source": a.get("source", {}).get("name", "")
             } for a in data.get("articles", [])
         ]
     except Exception as e:
@@ -572,226 +257,108 @@ def prophet_forecast(data, forecast_days, country='IN'):
     forecast = model.predict(future)
     return model, forecast
 
-def tune_tft_hyperparameters(train_dataloader, val_dataloader):
-    """Optimize TFT hyperparameters using Optuna"""
-    logger.info("Tuning TFT hyperparameters...")
+def linear_trend_plus_volatility(data, forecast_days):
+    """Simplified TFT alternative: Linear trend + volatility features"""
+    if len(data) < 60:
+        raise ValueError("Need at least 60 days of data for forecasting")
     
-    def objective(trial):
-        hidden_size = trial.suggest_int("hidden_size", 8, 32)
-        dropout = trial.suggest_float("dropout", 0.1, 0.5)
-        learning_rate = trial.suggest_float("learning_rate", 1e-3, 1e-1, log=True)
-        attention_head_size = trial.suggest_int("attention_head_size", 1, 4)
-        hidden_continuous_size = trial.suggest_int("hidden_continuous_size", 4, 16)
-        
-        early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=3, verbose=False, mode="min")
-        
-        tft = TemporalFusionTransformer.from_dataset(
-            train_dataloader.dataset,
-            learning_rate=learning_rate,
-            hidden_size=hidden_size,
-            attention_head_size=attention_head_size,
-            dropout=dropout,
-            hidden_continuous_size=hidden_continuous_size,
-            output_size=3,
-            loss=QuantileLoss(quantiles=[0.1, 0.5, 0.9]),
-            reduce_on_plateau_patience=2,
-        )
-        
-        trainer = pl.Trainer(
-            max_epochs=15,
-            gpus=0,
-            enable_progress_bar=False,
-            gradient_clip_val=0.1,
-            callbacks=[early_stop_callback],
-            limit_train_batches=15,
-            enable_checkpointing=True,
-        )
-        
-        trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-        return trainer.callback_metrics["val_loss"].item()
+    # Prepare data
+    df = data[['Close']].copy()
+    df['log_close'] = np.log(df['Close'])
+    df['trend'] = np.arange(len(df))
     
-    study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=10)
+    # Calculate volatility
+    df['returns'] = df['Close'].pct_change()
+    df['volatility'] = df['returns'].rolling(window=20).std()
+    df = df.dropna()
     
-    logger.info(f"Best hyperparameters: {study.best_params}")
-    return study.best_params
-
-def tft_forecast(data, forecast_days, tune=False):
-    """Perform time series forecasting using Temporal Fusion Transformer"""
-    # Add technical indicators
-    data = calculate_technical_indicators(data.copy())
+    # Train linear model
+    X = df[['trend', 'volatility']].values
+    y = df['log_close'].values
     
-    # Prepare data for TFT
-    df = data.reset_index()
-    df.rename(columns={'Date': 'date'}, inplace=True)
-    df['time_idx'] = np.arange(len(df))
-    df['series'] = "stock"
-    df['date'] = pd.to_datetime(df['date'])
+    # Fit model
+    model = LinearRegression()
+    model.fit(X, y)
     
-    # Add additional features
-    df['day'] = df['date'].dt.day.astype(str)
-    df['dayofweek'] = df['date'].dt.dayofweek.astype(str)
-    df['month'] = df['date'].dt.month.astype(str)
-    df['quarter'] = df['date'].dt.quarter.astype(str)
+    # Generate future data
+    last_trend = df['trend'].iloc[-1]
+    last_vol = df['volatility'].iloc[-1]
     
-    # Define features
-    features = ['Close', 'SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Signal', 
-                'MACD_Hist', 'BB_Upper', 'BB_Lower', 'BB_Width', 'Volatility',
-                'Return_1d', 'Return_3d', 'Return_5d', 'Return_7d']
+    future_trend = np.arange(last_trend + 1, last_trend + forecast_days + 1)
+    future_vol = np.full(forecast_days, last_vol)  # Use last known volatility
     
-    available_features = [f for f in features if f in df.columns]
+    X_future = np.column_stack([future_trend, future_vol])
     
-    # Define training parameters
-    max_prediction_length = forecast_days
-    max_encoder_length = min(180, len(df) - max_prediction_length - 1)
+    # Make predictions
+    log_forecast = model.predict(X_future)
+    forecast = np.exp(log_forecast)
     
-    if max_encoder_length < 60:
-        raise ValueError("Insufficient data for TFT forecasting. Need at least 60 days of data.")
-    
-    training_cutoff = df["time_idx"].max() - max_prediction_length
-    
-    # Create dataset
-    training = TimeSeriesDataSet(
-        df[df["time_idx"] <= training_cutoff],
-        time_idx="time_idx",
-        target="Close",
-        group_ids=["series"],
-        min_encoder_length=max_encoder_length // 2,
-        max_encoder_length=max_encoder_length,
-        min_prediction_length=1,
-        max_prediction_length=max_prediction_length,
-        static_categoricals=["series"],
-        time_varying_known_categoricals=["day", "dayofweek", "month", "quarter"],
-        time_varying_known_reals=["time_idx"],
-        time_varying_unknown_reals=available_features,
-        target_normalizer=GroupNormalizer(groups=["series"], transformation="softplus"),
-        add_relative_time_idx=True,
-        add_target_scales=True,
-        add_encoder_length=True,
-    )
-    
-    # Create validation set
-    validation = TimeSeriesDataSet.from_dataset(training, df, predict=True, stop_randomization=True)
-    
-    # Create dataloaders
-    batch_size = 16
-    train_dataloader = training.to_dataloader(train=True, batch_size=batch_size, num_workers=0)
-    val_dataloader = validation.to_dataloader(train=False, batch_size=batch_size, num_workers=0)
-    
-    # Tune hyperparameters if requested
-    best_params = {
-        'hidden_size': 16,
-        'attention_head_size': 2,
-        'dropout': 0.1,
-        'learning_rate': 0.01,
-        'hidden_continuous_size': 8
-    }
-    
-    if tune:
-        try:
-            best_params = tune_tft_hyperparameters(train_dataloader, val_dataloader)
-        except Exception as e:
-            logger.error(f"Hyperparameter tuning failed: {str(e)}")
-    
-    # Configure TFT with best parameters
-    pl.seed_everything(42)
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=5, verbose=False, mode="min")
-    
-    tft = TemporalFusionTransformer.from_dataset(
-        training,
-        learning_rate=best_params['learning_rate'],
-        hidden_size=best_params['hidden_size'],
-        attention_head_size=best_params['attention_head_size'],
-        dropout=best_params['dropout'],
-        hidden_continuous_size=best_params['hidden_continuous_size'],
-        output_size=3,
-        loss=QuantileLoss(quantiles=[0.1, 0.5, 0.9]),
-        reduce_on_plateau_patience=3,
-    )
-    
-    # Train model
-    trainer = pl.Trainer(
-        max_epochs=20,
-        gpus=0,
-        enable_progress_bar=False,
-        gradient_clip_val=0.1,
-        callbacks=[early_stop_callback],
-        limit_train_batches=20,
-        enable_checkpointing=True,
-    )
-    
-    trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-    
-    # Generate predictions
-    raw_predictions, x = tft.predict(val_dataloader, mode="raw", return_x=True)
-    
-    # Extract forecast values
-    forecast = raw_predictions[0].output.prediction[1].cpu().numpy().flatten()  # P50
-    lower_band = raw_predictions[0].output.prediction[0].cpu().numpy().flatten()  # P10
-    upper_band = raw_predictions[0].output.prediction[2].cpu().numpy().flatten()  # P90
-    
-    # Get actual values for comparison
-    actuals = torch.cat([y[0] for x, y in iter(val_dataloader)]).cpu().numpy()
-    
-    # Calculate RMSE
-    train_rmse = np.sqrt(mean_squared_error(actuals.flatten()[:len(forecast)], forecast))
-    
-    # Extract attention weights
-    attention = tft.interpret_output(raw_predictions, reduction="none")[1]['attention'][0].detach().cpu().numpy()
-    
-    # Calculate feature importance using SHAP
-    explainer = shap.DeepExplainer(tft, val_dataloader)
-    shap_values = explainer.shap_values(val_dataloader)
-    
-    # MLflow logging
-    try:
-        with mlflow.start_run():
-            mlflow.log_params(best_params)
-            mlflow.log_metrics({"train_rmse": train_rmse})
-            mlflow.pytorch.log_model(tft, "tft_model")
-            mlflow.log_dict(json.dumps(best_params), "params.json")
-            
-            # Register model
-            run_id = mlflow.active_run().info.run_id
-            model_uri = f"runs:/{run_id}/tft_model"
-            mlflow.register_model(model_uri, MODEL_REGISTRY_NAME)
-            
-            logger.info(f"Logged TFT model to MLflow. Run ID: {run_id}")
-    except Exception as e:
-        logger.error(f"MLflow logging failed: {str(e)}")
+    # Confidence interval (simplified)
+    residuals = y - model.predict(X)
+    std_dev = np.std(residuals)
+    upper_band = np.exp(log_forecast + 1.96 * std_dev)
+    lower_band = np.exp(log_forecast - 1.96 * std_dev)
     
     return {
         'forecast': forecast,
         'upper_band': upper_band,
         'lower_band': lower_band,
-        'train_rmse': train_rmse,
-        'test_rmse': train_rmse,
-        'attention': attention,
-        'shap_values': shap_values,
-        'features': available_features,
-        'model': tft
+        'model': model
     }
 
-def ensemble_forecast(prophet_forecast, tft_forecast, actuals, forecast_days):
-    """Combine Prophet and TFT forecasts using weighted averaging"""
-    # Calculate weights based on recent performance
-    prophet_mae = mean_absolute_error(actuals[-30:], prophet_forecast[-30-forecast_days:-forecast_days])
-    tft_mae = mean_absolute_error(actuals[-30:], tft_forecast[:30])
+def hybrid_forecast(data, forecast_days):
+    """Hybrid forecasting with Prophet and simplified TFT alternative"""
+    try:
+        # Run Prophet forecast
+        prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
+        
+        # Run simplified TFT alternative
+        tft_results = linear_trend_plus_volatility(data, forecast_days)
+        
+        # Get Prophet forecast values
+        prophet_values = prophet_forecast_df['yhat'].values[-forecast_days:]
+        
+        # Combine forecasts with equal weighting
+        combined_forecast = (prophet_values + tft_results['forecast']) / 2
+        
+        # Combine confidence bands
+        prophet_upper = prophet_forecast_df['yhat_upper'].values[-forecast_days:]
+        prophet_lower = prophet_forecast_df['yhat_lower'].values[-forecast_days:]
+        tft_upper = tft_results['upper_band']
+        tft_lower = tft_results['lower_band']
+        
+        combined_upper = (prophet_upper + tft_upper) / 2
+        combined_lower = (prophet_lower + tft_lower) / 2
+        
+        return {
+            'forecast': combined_forecast,
+            'upper_band': combined_upper,
+            'lower_band': combined_lower,
+            'prophet_model': prophet_model,
+            'prophet_forecast': prophet_forecast_df,
+            'tft_model': tft_results['model'],
+            'hybrid': True
+        }
     
-    # Use inverse MAE as weights
-    prophet_weight = 1 / prophet_mae
-    tft_weight = 1 / tft_mae
-    total_weight = prophet_weight + tft_weight
-    
-    # Normalize weights
-    prophet_weight /= total_weight
-    tft_weight /= total_weight
-    
-    # Combine forecasts
-    combined_forecast = (prophet_forecast[-forecast_days:] * prophet_weight + 
-                         tft_forecast * tft_weight)
-    
-    return combined_forecast, prophet_weight, tft_weight
+    except Exception as e:
+        logger.error(f"Hybrid forecast failed: {str(e)}")
+        st.warning(f"Hybrid TFT model unavailable; showing Prophet-only forecast. Reason: {str(e)}")
+        
+        # Fallback to Prophet only
+        prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
+        forecast_values = prophet_forecast_df['yhat'].values[-forecast_days:]
+        upper_values = prophet_forecast_df['yhat_upper'].values[-forecast_days:]
+        lower_values = prophet_forecast_df['yhat_lower'].values[-forecast_days:]
+        
+        return {
+            'forecast': forecast_values,
+            'upper_band': upper_values,
+            'lower_band': lower_values,
+            'prophet_model': prophet_model,
+            'prophet_forecast': prophet_forecast_df,
+            'tft_model': None,
+            'hybrid': False
+        }
 
 # Module 5: Portfolio Optimization
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1007,9 +574,6 @@ class RealTimeMonitor:
         except Exception as e:
             logger.error(f"Redis get error: {str(e)}")
             return None
-
-# Initialize real-time monitor
-rt_monitor = RealTimeMonitor()
 
 # ------------------ UTILITY FUNCTIONS ------------------
 def calculate_annual_return(data, start_date, end_date):
@@ -1256,24 +820,6 @@ def get_institutional_activity(ticker):
         'Number of Institutions': np.random.randint(100, 500, 12)
     })
 
-def plot_attention_weights(attention):
-    """Plot TFT attention weights"""
-    fig, ax = plt.subplots(figsize=(10, 6))
-    cax = ax.matshow(attention, cmap='viridis')
-    fig.colorbar(cax)
-    ax.set_title("TFT Attention Weights")
-    ax.set_xlabel("Encoder Time Steps")
-    ax.set_ylabel("Decoder Time Steps")
-    return fig
-
-def plot_shap_values(shap_values, features):
-    """Plot SHAP values for feature importance"""
-    fig, ax = plt.subplots(figsize=(10, 6))
-    shap.summary_plot(shap_values, features, plot_type="bar", show=False)
-    plt.title("Feature Importance (SHAP Values)")
-    plt.tight_layout()
-    return fig
-
 def render_metrics(data, ticker, start_date, end_date):
     """Render key metrics for a stock"""
     if len(data) > 1 and 'Close' in data.columns:
@@ -1303,6 +849,9 @@ def render_metrics(data, ticker, start_date, end_date):
             </div>''', unsafe_allow_html=True)
     else:
         st.warning("Insufficient data to calculate metrics")
+
+# Initialize real-time monitor
+rt_monitor = RealTimeMonitor()
 
 # ------------------ UI STYLES ------------------
 CUSTOM_CSS = """
@@ -1860,58 +1409,6 @@ CUSTOM_CSS = """
         from { text-shadow: 0 0 5px var(--accent), 0 0 10px var(--accent); }
         to { text-shadow: 0 0 15px var(--accent), 0 0 30px var(--accent); }
     }
-    
-    /* Attention heatmap styling */
-    .attention-heatmap {
-        border-radius: 15px;
-        padding: 20px;
-        background: var(--vibrant-teal);
-        margin: 20px 0;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
-    }
-    
-    .shap-plot {
-        border-radius: 15px;
-        padding: 20px;
-        background: var(--vibrant-teal);
-        margin: 20px 0;
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
-    }
-    
-    .model-registry-card {
-        background: var(--vibrant-teal);
-        border-radius: 15px;
-        padding: 20px;
-        margin: 15px 0;
-        border: 1px solid var(--card-border);
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
-        position: relative;
-        overflow: hidden;
-        z-index: 1;
-    }
-    
-    .model-registry-card::before {
-        content: '';
-        position: absolute;
-        top: -2px;
-        left: -2px;
-        right: -2px;
-        bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
-        z-index: -1;
-        filter: blur(5px);
-        animation: glowing 3s ease-in-out infinite alternate;
-        background-size: 400% 400%;
-    }
-    
-    .ab-testing-card {
-        background: linear-gradient(135deg, var(--vibrant-teal), var(--vibrant-pink));
-        border-radius: 15px;
-        padding: 25px;
-        margin: 20px 0;
-        border: 1px solid var(--card-border);
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-    }
 </style>
 """
 
@@ -1943,7 +1440,8 @@ def main():
     ticker = st.sidebar.selectbox("📊 Select Stock", default_tickers, index=0)
     start_date = st.sidebar.date_input("📅 Start Date", datetime.now() - timedelta(days=365))
     end_date = st.sidebar.date_input("📅 End Date", datetime.now())
-    forecast_days = st.sidebar.slider("🔮 Forecast Days", 30, 365, 90)
+    # Changed max forecast days to 90
+    forecast_days = st.sidebar.slider("🔮 Forecast Days", 30, 90, 60)
     risk_tolerance = st.sidebar.slider("⚠️ Risk Tolerance (1=Low, 10=High)", 1, 10, 5)
     portfolio_size = st.sidebar.number_input("💰 Portfolio Size ($)", 10000, 1000000, 50000)
     portfolio_tickers = st.sidebar.multiselect("📊 Select Portfolio Stocks", default_tickers, default=default_tickers[:5])
@@ -1978,18 +1476,16 @@ def main():
     # Advanced options
     st.sidebar.markdown("### ⚙️ Advanced Options")
     tune_hyperparams = st.sidebar.checkbox("Tune Hyperparameters", value=False)
-    enable_ensemble = st.sidebar.checkbox("Enable Ensemble Forecasting", value=True)
-    enable_bandits = st.sidebar.checkbox("Enable Contextual Bandits", value=True)
-    enable_diversity = st.sidebar.checkbox("Enable Diversity Optimization", value=True)
+    enable_hybrid = st.sidebar.checkbox("Enable Hybrid Forecasting", value=True)
 
     # Fetch stock data
     with st.spinner('Fetching market data...'):
         data = get_stock_data(ticker, start_date, end_date)
 
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "🏠 Home", "📈 Market Data", "🔮 Forecasting", "📰 Sentiment", 
-        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time", "🧠 MLOps"
+        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time"
     ])
 
     # Home Tab
@@ -2028,7 +1524,7 @@ def main():
                 <h4>🔮 Hybrid Forecasting</h4>
                 <ul>
                     <li>Prophet time-series forecasting</li>
-                    <li>TFT neural network predictions</li>
+                    <li>Lightweight trend + volatility model</li>
                     <li>Confidence interval projections</li>
                     <li>Risk assessment metrics</li>
                 </ul>
@@ -2042,7 +1538,6 @@ def main():
                 <ul>
                     <li>Modern Portfolio Theory (MPT) implementation</li>
                     <li>Risk-adjusted allocation strategies</li>
-                    <li>Monte Carlo simulations</li>
                     <li>Macroeconomic factor integration</li>
                 </ul>
             </div>
@@ -2084,7 +1579,7 @@ def main():
                 <p><strong>AI-Powered Analytics</strong></p>
                 <ul style="text-align:left;">
                     <li>Prophet Forecasting</li>
-                    <li>TFT Neural Networks</li>
+                    <li>Linear Trend Model</li>
                     <li>FinBERT NLP</li>
                     <li>CVXPY Optimization</li>
                 </ul>
@@ -2273,84 +1768,54 @@ def main():
 
     # Forecasting Tab
     with tab3:
-        st.markdown('<div class="subheader">Hybrid Prophet-TFT Forecasting</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subheader">Hybrid Prophet + Trend+Volatility Forecasting</div>', unsafe_allow_html=True)
         
         if data.empty:
             st.error("No data available for forecasting. Please select a different ticker or date range.")
         else:
             try:
-                with st.spinner('Running Prophet forecast with technical indicators...'):
-                    prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
+                if enable_hybrid:
+                    with st.spinner('Running hybrid forecast...'):
+                        forecast_results = hybrid_forecast(data, forecast_days)
+                        
+                    st.subheader("Hybrid Forecast")
+                    fig = go.Figure()
                     
-                    st.subheader("Prophet Forecast")
-                    fig1 = plot_plotly(prophet_model, prophet_forecast_df)
-                    fig1.update_layout(
-                        height=500,
-                        template='plotly_dark',
-                        title=f"{ticker} Price Forecast",
-                        xaxis_title="Date",
-                        yaxis_title="Price"
-                    )
-                    st.plotly_chart(fig1, use_container_width=True)
-                    
-                    st.subheader("Forecast Components")
-                    fig2 = plot_components_plotly(prophet_model, prophet_forecast_df)
-                    st.plotly_chart(fig2, use_container_width=True)
-                    
-                    # Confidence interval
-                    last_forecast = prophet_forecast_df.iloc[-1]
-                    confidence_interval = last_forecast['yhat_upper'] - last_forecast['yhat_lower']
-                    confidence_percent = min(100, max(0, 100 - (confidence_interval / last_forecast['yhat'] * 100)))
-                    
-                    st.metric("Forecast Confidence", f"{confidence_percent:.1f}%")
-                    st.progress(int(confidence_percent))
-                    
-                    # Track performance
-                    prophet_rmse = np.sqrt(mean_squared_error(
-                        data['Close'].iloc[-30:], 
-                        prophet_forecast_df['yhat'].iloc[-30-forecast_days:-forecast_days]
-                    ))
-                    rt_monitor.monitor_performance("Prophet", prophet_rmse)
-                    
-            except Exception as e:
-                st.error(f"Prophet forecasting error: {str(e)}")
-            
-            try:
-                with st.spinner('Running TFT forecast with hyperparameter tuning...'):
-                    tft_results = tft_forecast(data, forecast_days, tune=tune_hyperparams)
-                    
-                    st.subheader("TFT Neural Network Forecast")
-                    fig_tft = go.Figure()
-                    fig_tft.add_trace(go.Scatter(
-                        x=data.index,
-                        y=data['Close'],
+                    # Historical data (last 180 days)
+                    historical = data['Close'].iloc[-180:]
+                    fig.add_trace(go.Scatter(
+                        x=historical.index,
+                        y=historical,
                         mode='lines',
-                        name='Actual Price',
+                        name='Historical Price',
                         line=dict(color='#4F8BF9')
                     ))
                     
+                    # Forecast dates
                     last_date = data.index[-1]
                     forecast_dates = pd.date_range(start=last_date, periods=forecast_days+1)[1:]
                     
-                    fig_tft.add_trace(go.Scatter(
+                    # Forecast line
+                    fig.add_trace(go.Scatter(
                         x=forecast_dates,
-                        y=tft_results['forecast'],
+                        y=forecast_results['forecast'],
                         mode='lines',
-                        name='TFT Forecast',
+                        name='Forecast',
                         line=dict(color='#00FF00', width=3)
                     ))
                     
-                    fig_tft.add_trace(go.Scatter(
+                    # Confidence band (single band)
+                    fig.add_trace(go.Scatter(
                         x=forecast_dates,
-                        y=tft_results['upper_band'],
+                        y=forecast_results['upper_band'],
                         mode='lines',
                         line=dict(width=0),
                         showlegend=False
                     ))
                     
-                    fig_tft.add_trace(go.Scatter(
+                    fig.add_trace(go.Scatter(
                         x=forecast_dates,
-                        y=tft_results['lower_band'],
+                        y=forecast_results['lower_band'],
                         mode='lines',
                         fill='tonexty',
                         fillcolor='rgba(0, 255, 0, 0.2)',
@@ -2358,90 +1823,107 @@ def main():
                         name='Confidence Band'
                     ))
                     
-                    fig_tft.update_layout(
-                        title='TFT Price Forecast with Confidence Bands',
+                    fig.update_layout(
+                        title=f'{ticker} Price Forecast',
                         xaxis_title='Date',
                         yaxis_title='Price',
                         template='plotly_dark',
                         height=500
                     )
-                    st.plotly_chart(fig_tft, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True)
                     
-                    col_tft1, col_tft2 = st.columns(2)
-                    col_tft1.metric("Train RMSE", f"{tft_results['train_rmse']:.2f}")
-                    col_tft2.metric("Test RMSE", f"{tft_results['test_rmse']:.2f}")
+                    # Show hybrid status
+                    if forecast_results['hybrid']:
+                        st.success("Hybrid Prophet + Trend+Volatility forecast completed successfully")
+                    else:
+                        st.warning("Using Prophet-only forecast as fallback")
                     
-                    # Track performance
-                    rt_monitor.monitor_performance("TFT", tft_results['train_rmse'])
+                    # Check for prediction alerts
+                    predicted_return = (forecast_results['forecast'][-1] / data['Close'].iloc[-1] - 1) * 100
+                    if abs(predicted_return) > alert_threshold:
+                        direction = "increase" if predicted_return > 0 else "decrease"
+                        st.warning(f"⚠️ Significant predicted {direction}: {predicted_return:.1f}% over {forecast_days} days")
                     
-                    # Attention Visualization
-                    if 'attention' in tft_results and tft_results['attention'] is not None:
-                        st.subheader("Attention Weights")
-                        st.markdown('<div class="attention-heatmap">', unsafe_allow_html=True)
-                        fig_attn = plot_attention_weights(tft_results['attention'])
-                        st.pyplot(fig_attn)
-                        st.markdown('</div>', unsafe_allow_html=True)
-                        st.caption("Attention weights show which historical time steps the model focuses on when making predictions")
+                    # Forecast components
+                    st.subheader("Forecast Components")
+                    try:
+                        fig_components = plot_components_plotly(forecast_results['prophet_model'], forecast_results['prophet_forecast'])
+                        st.plotly_chart(fig_components, use_container_width=True)
+                    except:
+                        st.warning("Component analysis not available for simplified model")
+                
+                else:
+                    # Prophet-only forecast
+                    with st.spinner('Running Prophet forecast...'):
+                        prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
+                        
+                    st.subheader("Prophet Forecast")
                     
-                    # SHAP Explainability
-                    if 'shap_values' in tft_results and 'features' in tft_results:
-                        st.subheader("TFT Feature Importance")
-                        fig_shap = plot_shap_values(tft_results['shap_values'], data[tft_results['features']])
-                        st.pyplot(fig_shap)
+                    # Get the last 180 days of historical data
+                    historical = prophet_forecast_df[prophet_forecast_df['ds'] < data.index[-1]]
+                    recent_historical = historical[historical['ds'] >= (data.index[-1] - pd.Timedelta(days=180))]
+                    
+                    # Forecast period
+                    future_forecast = prophet_forecast_df[prophet_forecast_df['ds'] >= data.index[-1]]
+                    
+                    fig1 = go.Figure()
+                    # Historical
+                    fig1.add_trace(go.Scatter(
+                        x=recent_historical['ds'],
+                        y=recent_historical['yhat'],
+                        mode='lines',
+                        name='Historical Fit',
+                        line=dict(color='blue')
+                    ))
+                    # Actual
+                    fig1.add_trace(go.Scatter(
+                        x=data.index,
+                        y=data['Close'],
+                        mode='lines',
+                        name='Actual Price',
+                        line=dict(color='#4F8BF9')
+                    ))
+                    # Forecast
+                    fig1.add_trace(go.Scatter(
+                        x=future_forecast['ds'],
+                        y=future_forecast['yhat'],
+                        mode='lines',
+                        name='Forecast',
+                        line=dict(color='green', width=3)
+                    ))
+                    # Confidence band (single band)
+                    fig1.add_trace(go.Scatter(
+                        x=future_forecast['ds'],
+                        y=future_forecast['yhat_upper'],
+                        mode='lines',
+                        line=dict(width=0),
+                        showlegend=False
+                    ))
+                    fig1.add_trace(go.Scatter(
+                        x=future_forecast['ds'],
+                        y=future_forecast['yhat_lower'],
+                        mode='lines',
+                        fill='tonexty',
+                        fillcolor='rgba(0,100,0,0.2)',
+                        line=dict(width=0),
+                        name='Uncertainty'
+                    ))
+                    
+                    fig1.update_layout(
+                        title=f'{ticker} Price Forecast',
+                        xaxis_title='Date',
+                        yaxis_title='Price',
+                        template='plotly_dark',
+                        height=500
+                    )
+                    st.plotly_chart(fig1, use_container_width=True)
+                    
+                    st.subheader("Forecast Components")
+                    fig2 = plot_components_plotly(prophet_model, prophet_forecast_df)
+                    st.plotly_chart(fig2, use_container_width=True)
             
             except Exception as e:
-                st.error(f"TFT forecasting error: {str(e)}")
-            
-            # Ensemble Forecasting
-            if enable_ensemble and not data.empty and 'prophet_forecast_df' in locals() and 'tft_results' in locals():
-                try:
-                    with st.spinner('Combining forecasts with ensemble model...'):
-                        combined_forecast, prophet_weight, tft_weight = ensemble_forecast(
-                            prophet_forecast_df['yhat'].values,
-                            tft_results['forecast'],
-                            data['Close'].values,
-                            forecast_days
-                        )
-                        
-                        st.subheader("Hybrid Ensemble Forecast")
-                        fig_ensemble = go.Figure()
-                        fig_ensemble.add_trace(go.Scatter(
-                            x=data.index,
-                            y=data['Close'],
-                            mode='lines',
-                            name='Actual Price',
-                            line=dict(color='#4F8BF9')
-                        ))
-                        
-                        fig_ensemble.add_trace(go.Scatter(
-                            x=forecast_dates,
-                            y=combined_forecast,
-                            mode='lines',
-                            name='Ensemble Forecast',
-                            line=dict(color='#FF00FF', width=3)
-                        ))
-                        
-                        fig_ensemble.update_layout(
-                            title='Hybrid Prophet-TFT Ensemble Forecast',
-                            xaxis_title='Date',
-                            yaxis_title='Price',
-                            template='plotly_dark',
-                            height=500
-                        )
-                        st.plotly_chart(fig_ensemble, use_container_width=True)
-                        
-                        col_ens1, col_ens2 = st.columns(2)
-                        col_ens1.metric("Prophet Weight", f"{prophet_weight:.2%}")
-                        col_ens2.metric("TFT Weight", f"{tft_weight:.2%}")
-                        
-                        # Check for prediction alerts
-                        predicted_return = (combined_forecast[-1] / data['Close'].iloc[-1] - 1) * 100
-                        if abs(predicted_return) > alert_threshold:
-                            direction = "increase" if predicted_return > 0 else "decrease"
-                            st.warning(f"⚠️ Significant predicted {direction}: {predicted_return:.1f}% over {forecast_days} days")
-                
-                except Exception as e:
-                    st.error(f"Ensemble forecasting error: {str(e)}")
+                st.error(f"Forecasting error: {str(e)}")
 
     # Sentiment Analysis Tab
     with tab4:
@@ -2473,25 +1955,6 @@ def main():
                     logger.error(f"Sentiment error: {str(e)}")
                     # Add neutral sentiment as fallback
                     sentiments.extend([{'label': 'NEUTRAL', 'score': 0.5}] * len(batch))
-            
-            # Apply diversity optimization
-            if enable_diversity:
-                try:
-                    # Generate embeddings for diversity
-                    embeddings = []
-                    for text in all_texts:
-                        # In real implementation, use a proper embedding model
-                        # Here we use a placeholder
-                        embedding = np.random.rand(768)
-                        embeddings.append(embedding)
-                    
-                    # Apply MMR diversity
-                    query_embedding = np.mean(embeddings, axis=0)
-                    selected_indices = diversity_optimizer.mmr(query_embedding, embeddings, k=5)
-                    news_items = [news_items[i] for i in selected_indices]
-                    sentiments = [sentiments[i] for i in selected_indices]
-                except Exception as e:
-                    logger.error(f"Diversity optimization error: {str(e)}")
             
             # Display results
             for idx, news in enumerate(news_items):
@@ -2708,53 +2171,6 @@ def main():
                 template='plotly_dark'
             )
             st.plotly_chart(fig_corr, use_container_width=True)
-            
-            # Monte Carlo Simulation
-            st.subheader("Portfolio Risk Simulation")
-            
-            # Run simulation
-            num_simulations = 1000
-            portfolio_returns = []
-            
-            for _ in range(num_simulations):
-                # Random weights
-                rand_weights = np.random.random(len(weights))
-                rand_weights /= rand_weights.sum()
-                
-                # Portfolio return
-                port_return = np.sum(returns.mean() * rand_weights) * 252
-                portfolio_returns.append(port_return)
-            
-            # Convert to numpy array
-            portfolio_returns = np.array(portfolio_returns)
-            
-            # Create histogram
-            fig_hist = px.histogram(
-                x=portfolio_returns * 100,
-                nbins=50,
-                title="Portfolio Return Distribution",
-                labels={'x': 'Annual Return (%)'}
-            )
-            fig_hist.update_layout(
-                template='plotly_dark',
-                xaxis_title="Annual Return (%)",
-                yaxis_title="Frequency",
-                height=500
-            )
-            fig_hist.add_vline(
-                x=np.mean(portfolio_returns) * 100, 
-                line_dash="dash", 
-                line_color="red",
-                annotation_text=f"Mean: {np.mean(portfolio_returns)*100:.2f}%"
-            )
-            st.plotly_chart(fig_hist, use_container_width=True)
-            
-            # Risk metrics
-            st.subheader("Portfolio Risk Metrics")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Expected Return", f"{np.mean(portfolio_returns)*100:.2f}%")
-            col2.metric("Best Case (95%)", f"{np.percentile(portfolio_returns, 95)*100:.2f}%")
-            col3.metric("Worst Case (5%)", f"{np.percentile(portfolio_returns, 5)*100:.2f}%")
             
             # Macroeconomic Dashboard
             st.subheader("Macroeconomic Dashboard")
@@ -3071,97 +2487,6 @@ def main():
         else:
             next_retrain = rt_monitor.last_retrain + timedelta(days=7)
             st.info(f"Models up to date. Next retraining scheduled for {next_retrain.strftime('%Y-%m-%d')}")
-
-    # MLOps Tab
-    with tab9:
-        st.markdown('<div class="header">🧠 MLOps Dashboard</div>', unsafe_allow_html=True)
-        st.markdown('<div class="subheader">Model Management & Experimentation</div>', unsafe_allow_html=True)
-        
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.subheader("Model Registry")
-            try:
-                # Get registered models
-                models = mlflow_client.search_registered_models()
-                
-                if models:
-                    st.success(f"Found {len(models)} registered models")
-                    for model in models:
-                        with st.expander(model.name):
-                            st.write(f"Latest Version: {model.latest_versions[0].version}")
-                            st.write(f"Stage: {model.latest_versions[0].current_stage}")
-                            st.write(f"Description: {model.description}")
-                else:
-                    st.warning("No models found in registry")
-            except Exception as e:
-                st.error(f"Failed to access model registry: {str(e)}")
-            
-            st.subheader("A/B Testing")
-            exp_name = st.text_input("Experiment Name", "forecast_model")
-            if st.button("Create Experiment"):
-                exp_id = ab_testing.create_experiment(
-                    name=exp_name,
-                    variants=["Prophet", "TFT", "Ensemble"],
-                    metrics=["click_through", "watch_time", "conversion"]
-                )
-                st.success(f"Created experiment: {exp_id}")
-            
-        with col2:
-            st.subheader("Model Performance")
-            try:
-                # Get experiment data
-                experiments = mlflow.search_experiments()
-                
-                if experiments:
-                    exp_data = []
-                    for exp in experiments:
-                        runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
-                        if not runs.empty:
-                            best_run = runs.loc[runs['metrics.rmse'].idxmin()]
-                            exp_data.append({
-                                "Experiment": exp.name,
-                                "Best RMSE": best_run['metrics.rmse'],
-                                "Run ID": best_run['run_id']
-                            })
-                    
-                    perf_df = pd.DataFrame(exp_data)
-                    if not perf_df.empty:
-                        fig = px.bar(perf_df, x='Experiment', y='Best RMSE', 
-                                     title='Model Performance Comparison',
-                                     color='Best RMSE')
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.warning("No performance data available")
-                else:
-                    st.warning("No experiments found")
-            except Exception as e:
-                st.error(f"Performance tracking error: {str(e)}")
-            
-            st.subheader("Feature Store")
-            st.info("""
-            **Embedding Management**
-            - Storing embeddings in Redis with FAISS indexing
-            - Hot-reload enabled for real-time updates
-            - Current index size: 0 embeddings (demo)
-            """)
-            
-            if st.button("Update Embeddings"):
-                with st.spinner("Updating embeddings..."):
-                    # Simulate embedding update
-                    embeddings = np.random.rand(10, 768).astype('float32')
-                    ids = [str(uuid.uuid4()) for _ in range(10)]
-                    embedding_manager.update_embeddings(embeddings, ids)
-                    st.success("Embeddings updated successfully")
-            
-            st.subheader("Data Versioning")
-            st.info("""
-            **DVC Configuration**
-            - Versioning datasets and models
-            - Reproducible pipeline tracking
-            """)
-            if st.button("Sync Data Version"):
-                st.success("Data versions synced with DVC")
 
 if __name__ == "__main__":
     main()
