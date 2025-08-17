@@ -221,9 +221,12 @@ def get_news(ticker):
         logger.error(f"News error: {e}")
         return []
 
-# Module 4: Forecasting
+# Module 4: Forecasting (patched)
+
 def prophet_forecast(data, forecast_days, country='IN'):
     """Perform time series forecasting using Prophet with holidays and technical indicators"""
+    import numpy as np
+
     if len(data) < 90:
         raise ValueError("Need at least 90 days of data for forecasting")
     
@@ -231,49 +234,66 @@ def prophet_forecast(data, forecast_days, country='IN'):
     if 'Close' not in data.columns:
         raise ValueError("Missing 'Close' column in data")
     
-    # Create holiday dataframe for the country
+    # Build holiday dataframe safely
     years = pd.date_range(start=data.index.min(), end=data.index.max() + timedelta(days=forecast_days)).year
-    all_years = list(range(min(years), max(years)+1))
-    country_holidays = holidays.CountryHoliday(country, years=all_years)
-    holiday_df = pd.DataFrame([(date, name) for date, name in country_holidays.items()], columns=['ds', 'holiday'])
+    all_years = list(range(int(min(years)), int(max(years)) + 1))
+    try:
+        country_holidays = holidays.CountryHoliday(country, years=all_years)
+        holiday_df = pd.DataFrame([(date, name) for date, name in country_holidays.items()], columns=['ds', 'holiday'])
+    except Exception:
+        # If holidays lib fails for the country or years, fall back to empty df
+        holiday_df = pd.DataFrame(columns=['ds', 'holiday'])
     
+    # If holiday_df is empty, pass None to Prophet to avoid ambiguous truth checks
+    prophet_holidays = holiday_df if not holiday_df.empty else None
+
+    # Prepare prophet dataframe
     prophet_df = data[['Close']].reset_index()
-    prophet_df.columns = ['ds', 'y']
+    # Ensure ds column name is consistent
+    prophet_df.columns.values[0] = 'ds'
+    prophet_df.columns.values[1] = 'y'
     
-    # Add technical indicators as regressors
+    # Create model
     model = Prophet(
         daily_seasonality=False,
         yearly_seasonality=True,
         weekly_seasonality=True,
-        changepoint_prior_scale=0.001,  # Reduced to prevent overfitting
+        changepoint_prior_scale=0.001,
         seasonality_prior_scale=10,
         changepoint_range=0.8,
-        interval_width=0.95,  # Wider confidence interval
+        interval_width=0.95,
         uncertainty_samples=100,
-        holidays=holiday_df
+        holidays=prophet_holidays
     )
     
     # Add custom seasonalities
     model.add_seasonality(name='monthly', period=30.5, fourier_order=5)
     model.add_seasonality(name='quarterly', period=91.25, fourier_order=7)
     
-    # Add technical indicators as regressors
+    # Add technical indicators as regressors — merge by 'ds' (date) to keep alignment
     tech_indicators = ['SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Hist', 'BB_Width', 'Volatility']
     for indicator in tech_indicators:
         if indicator in data.columns:
-            # Merge indicators ensuring proper index alignment
-            prophet_df = prophet_df.merge(data[[indicator]], left_index=True, right_index=True, how='left')
+            temp = data[[indicator]].reset_index()
+            # normalize the date column name to 'ds' regardless of the original index name
+            temp = temp.rename(columns={temp.columns[0]: 'ds', temp.columns[1]: indicator})
+            prophet_df = prophet_df.merge(temp[['ds', indicator]], on='ds', how='left')
             model.add_regressor(indicator)
     
+    # Fit model (Prophet expects ds,y and any regressors to be present)
     model.fit(prophet_df)
+    
+    # Create future dataframe (has 'ds' column)
     future = model.make_future_dataframe(periods=forecast_days)
     
     # Add future technical indicators (using the last known values as placeholders)
     for indicator in tech_indicators:
         if indicator in data.columns:
             last_value = data[indicator].iloc[-1]
+            # assign scalar value to the new column (Prophet future is a DataFrame with ds)
             future[indicator] = last_value
     
+    # Predict
     forecast = model.predict(future)
     return model, forecast
 
@@ -336,27 +356,46 @@ def linear_trend_plus_volatility(data, forecast_days):
 
 def hybrid_forecast(data, forecast_days):
     """Hybrid forecasting with Prophet and simplified TFT alternative"""
+    import numpy as np
+
     try:
         # Run Prophet forecast
         prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
         
-        # Run simplified TFT alternative
+        # Run simplified TFT alternative (user-provided function)
         tft_results = linear_trend_plus_volatility(data, forecast_days)
         
-        # Get Prophet forecast values
-        prophet_values = prophet_forecast_df['yhat'].values[-forecast_days:]
+        # Ensure prophet forecast arrays are numeric and properly sliced
+        prophet_values = np.asarray(prophet_forecast_df['yhat'].values[-forecast_days:], dtype=float)
+        prophet_upper = np.asarray(prophet_forecast_df['yhat_upper'].values[-forecast_days:], dtype=float)
+        prophet_lower = np.asarray(prophet_forecast_df['yhat_lower'].values[-forecast_days:], dtype=float)
         
-        # Combine forecasts with equal weighting
-        combined_forecast = (prophet_values + tft_results['forecast']) / 2
+        # Safely extract TFT outputs (may be list/Series/np.array)
+        tft_forecast = None
+        tft_upper = None
+        tft_lower = None
+        tft_model = None
+        if tft_results:
+            tft_forecast = np.asarray(tft_results.get('forecast')) if tft_results.get('forecast') is not None else None
+            tft_upper = np.asarray(tft_results.get('upper_band')) if tft_results.get('upper_band') is not None else None
+            tft_lower = np.asarray(tft_results.get('lower_band')) if tft_results.get('lower_band') is not None else None
+            tft_model = tft_results.get('model', None)
         
-        # Combine confidence bands
-        prophet_upper = prophet_forecast_df['yhat_upper'].values[-forecast_days:]
-        prophet_lower = prophet_forecast_df['yhat_lower'].values[-forecast_days:]
-        tft_upper = tft_results['upper_band']
-        tft_lower = tft_results['lower_band']
+        # Validate tft arrays; if missing or wrong length, fallback to prophet arrays
+        def valid_arr(arr):
+            return (arr is not None) and (hasattr(arr, '__len__')) and (len(arr) == forecast_days)
         
-        combined_upper = (prophet_upper + tft_upper) / 2
-        combined_lower = (prophet_lower + tft_lower) / 2
+        if not valid_arr(tft_forecast):
+            tft_forecast = prophet_values.copy()
+        if not valid_arr(tft_upper):
+            tft_upper = prophet_upper.copy()
+        if not valid_arr(tft_lower):
+            tft_lower = prophet_lower.copy()
+        
+        # Combine forecasts with equal weighting (elementwise)
+        combined_forecast = (prophet_values + np.asarray(tft_forecast, dtype=float)) / 2.0
+        combined_upper = (prophet_upper + np.asarray(tft_upper, dtype=float)) / 2.0
+        combined_lower = (prophet_lower + np.asarray(tft_lower, dtype=float)) / 2.0
         
         return {
             'forecast': combined_forecast,
@@ -364,19 +403,22 @@ def hybrid_forecast(data, forecast_days):
             'lower_band': combined_lower,
             'prophet_model': prophet_model,
             'prophet_forecast': prophet_forecast_df,
-            'tft_model': tft_results['model'],
+            'tft_model': tft_model,
             'hybrid': True
         }
     
     except Exception as e:
-        logger.error(f"Hybrid forecast failed: {str(e)}")
+        # Log and fallback to Prophet-only forecast
+        try:
+            logger.error(f"Hybrid forecast failed: {str(e)}")
+        except Exception:
+            pass
         st.warning(f"Hybrid TFT model unavailable; showing Prophet-only forecast. Reason: {str(e)}")
         
-        # Fallback to Prophet only
         prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
-        forecast_values = prophet_forecast_df['yhat'].values[-forecast_days:]
-        upper_values = prophet_forecast_df['yhat_upper'].values[-forecast_days:]
-        lower_values = prophet_forecast_df['yhat_lower'].values[-forecast_days:]
+        forecast_values = np.asarray(prophet_forecast_df['yhat'].values[-forecast_days:], dtype=float)
+        upper_values = np.asarray(prophet_forecast_df['yhat_upper'].values[-forecast_days:], dtype=float)
+        lower_values = np.asarray(prophet_forecast_df['yhat_lower'].values[-forecast_days:], dtype=float)
         
         return {
             'forecast': forecast_values,
