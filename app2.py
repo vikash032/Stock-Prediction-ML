@@ -115,7 +115,7 @@ def calculate_technical_indicators(data):
     except Exception as e:
         logger.error(f"Error calculating MACD: {str(e)}")
     
-    # Bollinger Bands (fixed typo)
+    # Bollinger Bands
     try:
         bollinger = ta.volatility.BollingerBands(close_series, window=20, window_dev=2)
         data['BB_Upper'] = bollinger.bollinger_hband()
@@ -221,7 +221,7 @@ def get_news(ticker):
         logger.error(f"News error: {e}")
         return []
 
-# Module 4: Forecasting
+# Module 4: Forecasting - FIXED MERGE ISSUE
 def prophet_forecast(data, forecast_days, country='IN'):
     """Perform time series forecasting using Prophet with holidays and technical indicators"""
     if len(data) < 90:
@@ -237,7 +237,9 @@ def prophet_forecast(data, forecast_days, country='IN'):
     country_holidays = holidays.CountryHoliday(country, years=all_years)
     holiday_df = pd.DataFrame([(date, name) for date, name in country_holidays.items()], columns=['ds', 'holiday'])
     
-    prophet_df = data[['Close']].reset_index()
+    # Create a copy with reset index for merging
+    data_reset = data.reset_index()
+    prophet_df = data_reset[['Date', 'Close']].copy()
     prophet_df.columns = ['ds', 'y']
     
     # Add technical indicators as regressors
@@ -257,16 +259,12 @@ def prophet_forecast(data, forecast_days, country='IN'):
     model.add_seasonality(name='monthly', period=30.5, fourier_order=5)
     model.add_seasonality(name='quarterly', period=91.25, fourier_order=7)
     
-    # Add technical indicators as regressors
+    # Add technical indicators as regressors - FIXED MERGE
     tech_indicators = ['SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Hist', 'BB_Width', 'Volatility']
     for indicator in tech_indicators:
-        if indicator in data.columns:
-            # Create temp dataframe with indicator and reset index
-            temp_df = data[[indicator]].reset_index()
-            temp_df.columns = ['ds', indicator]
-            
-            # Merge on ds column
-            prophet_df = prophet_df.merge(temp_df, on='ds', how='left')
+        if indicator in data_reset.columns:
+            # Directly assign from the reset DataFrame to ensure alignment
+            prophet_df[indicator] = data_reset[indicator]
             model.add_regressor(indicator)
     
     model.fit(prophet_df)
@@ -274,8 +272,8 @@ def prophet_forecast(data, forecast_days, country='IN'):
     
     # Add future technical indicators (using the last known values as placeholders)
     for indicator in tech_indicators:
-        if indicator in data.columns:
-            last_value = data[indicator].iloc[-1]
+        if indicator in data_reset.columns:
+            last_value = data_reset[indicator].iloc[-1]
             future[indicator] = last_value
     
     forecast = model.predict(future)
@@ -1477,12 +1475,6 @@ def main():
     # Apply custom CSS
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     
-    # Initialize session state
-    if 'refresh_count' not in st.session_state:
-        st.session_state.refresh_count = 0
-    if 'last_refresh' not in st.session_state:
-        st.session_state.last_refresh = datetime.now()
-    
     # Header
     st.markdown('<h1 class="header">🚀 QUANTUM STOCK ANALYTICS</h1>', unsafe_allow_html=True)
     st.markdown("""
@@ -1845,7 +1837,8 @@ def main():
                 with col_inst2:
                     st.metric("Number of Institutions", inst_data['Number of Institutions'].iloc[-1])
 
-    # Forecasting Tab
+
+    # Forecasting Tab - FIXED
     with tab3:
         st.markdown('<div class="subheader">Hybrid Prophet + Trend+Volatility Forecasting</div>', unsafe_allow_html=True)
         
@@ -2511,22 +2504,21 @@ def main():
                 trades_df = pd.DataFrame(results['trades'], columns=['Action', 'Date', 'Price', 'Shares'])
                 st.dataframe(trades_df)
 
-    # Real-Time Monitoring Tab
+    # Real-Time Monitoring Tab - FIXED rerun issue
     with tab8:
         st.markdown('<div class="header">🚀 Real-Time Dashboard</div>', unsafe_allow_html=True)
         st.markdown('<div class="subheader">Live market monitoring and predictions</div>', unsafe_allow_html=True)
         
         # Real-time data fetching
-        if st.button("Refresh Data"):
-            st.session_state.refresh_count += 1
-            st.session_state.last_refresh = datetime.now()
-            st.success("Data refresh triggered!")
-            
+        if st.button("Refresh Real-Time Data"):
+            # Use st.rerun() instead of st.experimental_rerun()
+            st.rerun()
+        
         col_rt1, col_rt2, col_rt3 = st.columns(3)
         with col_rt1:
-            st.metric("Last Refresh", st.session_state.last_refresh.strftime("%H:%M:%S"))
+            st.metric("Last Refresh", datetime.now().strftime("%H:%M:%S"))
         with col_rt2:
-            st.metric("Refresh Count", st.session_state.refresh_count)
+            st.metric("Market Status", "Open" if 9 <= datetime.now().hour < 16 else "Closed")
         with col_rt3:
             st.metric("Data Latency", "0.5s")
         
