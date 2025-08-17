@@ -23,7 +23,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 from prophet import Prophet
 from prophet.plot import plot_plotly, plot_components_plotly
-from transformers import pipeline
+try: from transformers import pipeline
+except Exception: pipeline = None
+
 from datetime import datetime, timedelta
 import cvxpy as cp
 from sklearn.preprocessing import MinMaxScaler
