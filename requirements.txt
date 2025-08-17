@@ -19,6 +19,9 @@ python-dotenv
 shap
 optuna
 redis
+librosa
+soundfile
+scipy
 dask
 distributed
 aiohttp 
