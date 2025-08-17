@@ -22,6 +22,7 @@ redis
 librosa
 soundfile
 scipy
+dvc
 dask
 distributed
 aiohttp 
