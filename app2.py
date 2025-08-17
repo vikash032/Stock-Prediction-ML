@@ -445,32 +445,49 @@ def backtest_strategy(data, strategy, params):
     if strategy == "Moving Average Crossover":
         short_window = params.get('short_window', 20)
         long_window = params.get('long_window', 50)
+        
+        # Validate window sizes
+        if short_window >= long_window:
+            st.error("Short window must be smaller than long window")
+            return {
+                'return': 0,
+                'drawdown': 0,
+                'sharpe': 0,
+                'trades': 0
+            }
+            
+        # Calculate moving averages
         data['SMA_short'] = data['Close'].rolling(short_window).mean()
         data['SMA_long'] = data['Close'].rolling(long_window).mean()
     
     for i in range(long_window, len(data)):
-        price = data['Close'].iloc[i]
-        prev_price = data['Close'].iloc[i-1]
+        # Ensure we're using scalar values
+        price = float(data['Close'].iloc[i])
+        prev_price = float(data['Close'].iloc[i-1])
         
         # Generate signal based on strategy
         signal = 0
         
         if strategy == "Moving Average Crossover":
-            if data['SMA_short'].iloc[i-1] < data['SMA_long'].iloc[i-1] and \
-               data['SMA_short'].iloc[i] > data['SMA_long'].iloc[i]:
+            # FIX: Convert to scalar values for comparison
+            sma_short_prev = float(data['SMA_short'].iloc[i-1])
+            sma_long_prev = float(data['SMA_long'].iloc[i-1])
+            sma_short_current = float(data['SMA_short'].iloc[i])
+            sma_long_current = float(data['SMA_long'].iloc[i])
+            
+            if sma_short_prev < sma_long_prev and sma_short_current > sma_long_current:
                 signal = 1  # Golden cross - buy
-            elif data['SMA_short'].iloc[i-1] > data['SMA_long'].iloc[i-1] and \
-                 data['SMA_short'].iloc[i] < data['SMA_long'].iloc[i]:
+            elif sma_short_prev > sma_long_prev and sma_short_current < sma_long_current:
                 signal = -1  # Death cross - sell
         
-        # Execute trades
+        # Execute trades - FIX: Ensure position is scalar
         if signal == 1 and cash > 0:
             # Buy with all cash
             shares = cash // price
             position += shares
             cash -= shares * price
             trades.append(('buy', data.index[i], price, shares))
-        elif signal == -1 and position > 0:
+        elif signal == -1 and position > 0:  # Now position is scalar
             # Sell all position
             cash += position * price
             trades.append(('sell', data.index[i], price, position))
