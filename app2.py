@@ -46,19 +46,6 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import calendar
-import mlflow
-import mlflow.sklearn
-from mlflow.tracking import MlflowClient
-import faiss
-import clip
-import torch
-from PIL import Image
-import requests
-from io import BytesIO
-from sklearn.linear_model import LinearRegression
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from scipy.stats import ttest_ind
 
 # ------------------ CONFIGURATION ------------------
 # Initialize logging
@@ -81,294 +68,6 @@ st.set_page_config(
 
 # Auto-refresh every 2 minutes
 st_autorefresh(interval=120000, key="data_refresh")
-
-# ------------------ NEW FEATURES ------------------
-class CollaborativeFiltering:
-    def __init__(self):
-        self.redis = redis.Redis(
-            host=os.getenv('REDIS_HOST', 'localhost'),
-            port=os.getenv('REDIS_PORT', 6379),
-            password=os.getenv('REDIS_PASSWORD', ''),
-            decode_responses=True
-        )
-        self.index = None
-        self.embeddings = {}
-        self.load_embeddings()
-        
-    def load_embeddings(self):
-        """Load embeddings from Redis"""
-        try:
-            embeddings_data = self.redis.get("stock_embeddings")
-            if embeddings_data:
-                self.embeddings = json.loads(embeddings_data)
-                self.build_index()
-        except Exception as e:
-            logger.error(f"Error loading embeddings: {str(e)}")
-    
-    def build_index(self):
-        """Build FAISS index"""
-        if not self.embeddings:
-            return
-            
-        embeddings_list = []
-        tickers = []
-        for ticker, emb in self.embeddings.items():
-            embeddings_list.append(emb)
-            tickers.append(ticker)
-            
-        embeddings_array = np.array(embeddings_list).astype('float32')
-        dimension = embeddings_array.shape[1]
-        
-        self.index = faiss.IndexFlatL2(dimension)
-        self.index.add(embeddings_array)
-        self.tickers = np.array(tickers)
-    
-    def update_embedding(self, ticker, embedding):
-        """Update embedding for a stock"""
-        self.embeddings[ticker] = embedding.tolist()
-        self.save_embeddings()
-        self.build_index()
-    
-    def save_embeddings(self):
-        """Save embeddings to Redis"""
-        try:
-            self.redis.set("stock_embeddings", json.dumps(self.embeddings))
-        except Exception as e:
-            logger.error(f"Error saving embeddings: {str(e)}")
-    
-    def get_similar_stocks(self, ticker, k=5):
-        """Get similar stocks using FAISS index"""
-        if ticker not in self.embeddings or not self.index:
-            return []
-            
-        query = np.array([self.embeddings[ticker]]).astype('float32')
-        distances, indices = self.index.search(query, k+1)
-        
-        # Exclude the query ticker itself
-        similar_tickers = self.tickers[indices[0][1:k+1]]
-        return list(similar_tickers)
-    
-    def record_interaction(self, user_id, ticker, interaction_type="view", weight=1.0):
-        """Record user interaction with a stock"""
-        try:
-            key = f"user:{user_id}:interactions"
-            self.redis.zincrby(key, weight, ticker)
-            self.redis.expire(key, 604800)  # Expire in 7 days
-        except Exception as e:
-            logger.error(f"Error recording interaction: {str(e)}")
-
-class ABTesting:
-    def __init__(self):
-        self.groups = {}
-        self.results = {
-            'control': {'clicks': 0, 'views': 0, 'watch_time': 0},
-            'treatment': {'clicks': 0, 'views': 0, 'watch_time': 0}
-        }
-    
-    def assign_group(self, user_id):
-        """Randomly assign user to control or treatment group"""
-        if user_id not in self.groups:
-            # Persistent assignment using hash
-            group_hash = hash(user_id) % 2
-            self.groups[user_id] = 'control' if group_hash == 0 else 'treatment'
-        return self.groups[user_id]
-    
-    def record_metric(self, group, metric, value=1):
-        """Record metric for A/B testing"""
-        if group in self.results and metric in self.results[group]:
-            self.results[group][metric] += value
-    
-    def calculate_lift(self):
-        """Calculate statistical lift between groups"""
-        control_ctr = self.results['control']['clicks'] / max(1, self.results['control']['views'])
-        treatment_ctr = self.results['treatment']['clicks'] / max(1, self.results['treatment']['views'])
-        
-        lift = (treatment_ctr - control_ctr) / control_ctr if control_ctr > 0 else 0
-        
-        # Statistical significance
-        control_clicks = self.results['control']['clicks']
-        control_views = self.results['control']['views']
-        treatment_clicks = self.results['treatment']['clicks']
-        treatment_views = self.results['treatment']['views']
-        
-        _, p_value = ttest_ind(
-            [1]*control_clicks + [0]*(control_views - control_clicks),
-            [1]*treatment_clicks + [0]*(treatment_views - treatment_clicks),
-            equal_var=False
-        )
-        
-        return {
-            'lift': lift * 100,  # as percentage
-            'p_value': p_value,
-            'significant': p_value < 0.05
-        }
-
-class PersonalizationEngine:
-    def __init__(self, n_arms=10, alpha=0.2):
-        self.alpha = alpha
-        self.n_arms = n_arms
-        self.user_models = {}
-        
-    def get_recommendations(self, user_id, stocks, context_features):
-        """Get personalized recommendations using LinUCB"""
-        if user_id not in self.user_models:
-            self.user_models[user_id] = {
-                'A': np.identity(len(context_features[0])),
-                'b': np.zeros(len(context_features[0])),
-                'theta': np.zeros(len(context_features[0]))
-            }
-            
-        model = self.user_models[user_id]
-        scores = []
-        
-        for i, features in enumerate(context_features):
-            x = np.array(features)
-            A_inv = np.linalg.inv(model['A'])
-            theta = A_inv.dot(model['b'])
-            p = theta.dot(x) + self.alpha * np.sqrt(x.dot(A_inv).dot(x))
-            scores.append((i, p))
-        
-        # Sort by score and get top recommendations
-        scores.sort(key=lambda x: x[1], reverse=True)
-        top_indices = [idx for idx, _ in scores[:self.n_arms]]
-        return [stocks[i] for i in top_indices]
-    
-    def update_model(self, user_id, chosen_stock_idx, reward, context_features):
-        """Update model based on user feedback"""
-        if user_id not in self.user_models:
-            return
-            
-        model = self.user_models[user_id]
-        x = np.array(context_features[chosen_stock_idx])
-        
-        model['A'] += np.outer(x, x)
-        model['b'] += reward * x
-        model['theta'] = np.linalg.inv(model['A']).dot(model['b'])
-
-def mmr_diversify(recommendations, embeddings, lambda_param=0.5, top_n=10):
-    """Diversify recommendations using Maximal Marginal Relevance"""
-    if not recommendations or not embeddings:
-        return recommendations[:top_n]
-    
-    selected = []
-    remaining = recommendations.copy()
-    
-    # Start with most relevant
-    selected.append(remaining.pop(0))
-    
-    while remaining and len(selected) < top_n:
-        mmr_scores = []
-        for item in remaining:
-            sim_relevance = cosine_similarity(
-                [embeddings[selected[0]]], 
-                [embeddings[item]]
-            )[0][0]
-            
-            sim_diversity = 0
-            if len(selected) > 1:
-                sim_diversity = max([
-                    cosine_similarity(
-                        [embeddings[s]], 
-                        [embeddings[item]]
-                    )[0][0] for s in selected[1:]
-                ])
-            
-            mmr_score = lambda_param * sim_relevance - (1 - lambda_param) * sim_diversity
-            mmr_scores.append(mmr_score)
-        
-        # Select item with highest MMR score
-        best_idx = np.argmax(mmr_scores)
-        selected.append(remaining.pop(best_idx))
-    
-    return selected
-
-def load_clip_model():
-    """Load and cache the CLIP model"""
-    logger.info("Loading CLIP model")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, preprocess = clip.load("ViT-B/32", device=device)
-    return model, preprocess, device
-
-def get_image_embeddings(image_url, model, preprocess, device):
-    """Get image embeddings using CLIP"""
-    try:
-        response = requests.get(image_url)
-        img = Image.open(BytesIO(response.content))
-        image = preprocess(img).unsqueeze(0).to(device)
-        
-        with torch.no_grad():
-            image_features = model.encode_image(image)
-            image_features /= image_features.norm(dim=-1, keepdim=True)
-            
-        return image_features.cpu().numpy().flatten().tolist()
-    except Exception as e:
-        logger.error(f"Error processing image: {str(e)}")
-        return None
-
-def get_text_embeddings(text, model, device):
-    """Get text embeddings using CLIP"""
-    try:
-        text = clip.tokenize([text]).to(device)
-        
-        with torch.no_grad():
-            text_features = model.encode_text(text)
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-            
-        return text_features.cpu().numpy().flatten().tolist()
-    except Exception as e:
-        logger.error(f"Error processing text: {str(e)}")
-        return None
-
-def setup_mlflow():
-    """Set up MLflow tracking"""
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000"))
-    mlflow.set_experiment("StockAnalytics")
-
-def log_model(model, model_name, model_type, params, metrics):
-    """Log model to MLflow registry"""
-    with mlflow.start_run():
-        mlflow.log_params(params)
-        mlflow.log_metrics(metrics)
-        
-        if model_type == "prophet":
-            mlflow.prophet.log_model(model, model_name)
-        elif model_type == "tft":
-            torch.save(model.state_dict(), "model.pt")
-            mlflow.pytorch.log_model(model, model_name)
-        elif model_type == "sklearn":
-            mlflow.sklearn.log_model(model, model_name)
-        
-        mlflow.set_tag("model_type", model_type)
-
-def retrain_pipeline():
-    """Automated retraining pipeline"""
-    logger.info("Starting retraining pipeline")
-    # This would be implemented based on specific requirements
-    # Placeholder implementation
-    try:
-        # Check for new data
-        # Preprocess data
-        # Train new models
-        # Evaluate models
-        # Log to MLflow
-        # Promote best model
-        logger.info("Retraining completed successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Retraining failed: {str(e)}")
-        return False
-
-# Initialize MLflow
-setup_mlflow()
-
-# Initialize collaborative filtering
-cf_engine = CollaborativeFiltering()
-
-# Initialize A/B testing
-ab_test = ABTesting()
-
-# Initialize personalization engine
-personalization_engine = PersonalizationEngine(alpha=0.3)
 
 # ------------------ MODULES ------------------
 # Module 1: Data Fetching
@@ -508,34 +207,15 @@ def get_news(ticker):
             logger.error(f"News API error: {data.get('message', 'Unknown error')}")
             return []
             
-        articles = []
-        for a in data.get("articles", []):
-            article = {
+        return [
+            {
                 "title": a.get("title", ""),
                 "summary": a.get("description", ""),
                 "link": a.get("url", ""),
                 "date": a.get("publishedAt", ""),
-                "source": a.get("source", {}).get("name", ""),
-                "image_url": a.get("urlToImage", "")
-            }
-            
-            # Get multi-modal embeddings if image available
-            if article["image_url"]:
-                clip_model, clip_preprocess, clip_device = load_clip_model()
-                image_emb = get_image_embeddings(article["image_url"], clip_model, clip_preprocess, clip_device)
-                text_emb = get_text_embeddings(f"{article['title']} {article['summary']}", clip_model, clip_device)
-                
-                if image_emb and text_emb:
-                    # Combine embeddings
-                    combined_emb = (np.array(image_emb) + np.array(text_emb)).tolist()
-                    article["embedding"] = combined_emb
-                    
-                    # Update collaborative filtering
-                    cf_engine.update_embedding(ticker, np.array(combined_emb))
-            
-            articles.append(article)
-        
-        return articles
+                "source": a.get("source", {}).get("name", "")
+            } for a in data.get("articles", [])
+        ]
     except Exception as e:
         logger.error(f"News error: {e}")
         return []
@@ -589,16 +269,6 @@ def prophet_forecast(data, forecast_days, country='IN'):
             future[indicator] = last_value
     
     forecast = model.predict(future)
-    
-    # Log to MLflow
-    log_model(
-        model, 
-        "prophet_model", 
-        "prophet", 
-        params={"forecast_days": forecast_days, "country": country},
-        metrics={"rmse": np.sqrt(mean_squared_error(data['Close'], forecast['yhat'][:-forecast_days]))}
-    )
-    
     return model, forecast
 
 def tune_tft_hyperparameters(train_dataloader, val_dataloader):
@@ -653,9 +323,9 @@ def tft_forecast(data, forecast_days, tune=False):
     # Prepare data for TFT
     df = data.reset_index()
     df.rename(columns={'Date': 'date'}, inplace=True)
-    df['date'] = pd.to_datetime(df['date'])
     df['time_idx'] = np.arange(len(df))
     df['series'] = "stock"
+    df['date'] = pd.to_datetime(df['date'])
     
     # Add additional features
     df['day'] = df['date'].dt.day.astype(str)
@@ -771,15 +441,6 @@ def tft_forecast(data, forecast_days, tune=False):
     # Calculate feature importance using SHAP
     explainer = shap.DeepExplainer(tft, val_dataloader)
     shap_values = explainer.shap_values(val_dataloader)
-    
-    # Log to MLflow
-    log_model(
-        tft, 
-        "tft_model", 
-        "tft", 
-        params=best_params,
-        metrics={"rmse": train_rmse}
-    )
     
     return {
         'forecast': forecast,
@@ -953,30 +614,6 @@ class RealTimeMonitor:
             password=os.getenv('REDIS_PASSWORD', ''),
             decode_responses=True
         )
-        
-        # Setup retraining scheduler
-        self.setup_retraining_scheduler()
-    
-    def setup_retraining_scheduler(self):
-        """Setup periodic retraining"""
-        schedule.every().sunday.at("02:00").do(self.trigger_retraining)
-        
-        # Start scheduler in background thread
-        scheduler_thread = threading.Thread(target=self.run_scheduler)
-        scheduler_thread.daemon = True
-        scheduler_thread.start()
-    
-    def run_scheduler(self):
-        """Run the scheduling loop"""
-        while True:
-            schedule.run_pending()
-            time.sleep(60)
-    
-    def trigger_retraining(self):
-        """Trigger retraining pipeline"""
-        logger.info("Scheduled retraining triggered")
-        if retrain_pipeline():
-            self.last_retrain = datetime.now()
     
     def monitor_performance(self, model_name, rmse):
         """Track model performance and detect degradation"""
@@ -1176,8 +813,8 @@ def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="M
         rsi = ta.momentum.RSIIndicator(close_series).rsi().iloc[-1] if len(close_series) > 0 else 50
         macd = ta.trend.MACD(close_series).macd_diff().iloc[-1] if len(close_series) > 0 else 0
         current_price = close_series.iloc[-1] if len(close_series) > 0 else 100
-        volatility = float(calculate_volatility(stock_data) if len(stock_data) > 30 else 20)
-
+        volatility = calculate_volatility(stock_data) if len(stock_data) > 30 else 20
+        
         # Get comparison price (30 days ago or first available)
         comparison_idx = max(0, len(close_series) - 30)
         comparison_price = close_series.iloc[comparison_idx] if len(close_series) > comparison_idx else current_price
@@ -1931,13 +1568,6 @@ def main():
     # Apply custom CSS
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     
-    # Initialize session state
-    if 'user_id' not in st.session_state:
-        st.session_state.user_id = f"user_{random.randint(1000, 9999)}"
-    
-    if 'ab_group' not in st.session_state:
-        st.session_state.ab_group = ab_test.assign_group(st.session_state.user_id)
-    
     # Header
     st.markdown('<h1 class="header">🚀 QUANTUM STOCK ANALYTICS</h1>', unsafe_allow_html=True)
     st.markdown("""
@@ -2001,13 +1631,11 @@ def main():
     # Fetch stock data
     with st.spinner('Fetching market data...'):
         data = get_stock_data(ticker, start_date, end_date)
-        # Record user interaction
-        cf_engine.record_interaction(st.session_state.user_id, ticker)
 
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "🏠 Home", "📈 Market Data", "🔮 Forecasting", "📰 Sentiment", 
-        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time", "🌟 Recommendations"
+        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time"
     ])
 
     # Home Tab
@@ -3070,97 +2698,6 @@ def main():
         else:
             next_retrain = rt_monitor.last_retrain + timedelta(days=7)
             st.info(f"Models up to date. Next retraining scheduled for {next_retrain.strftime('%Y-%m-%d')}")
-
-    # Recommendations Tab
-    with tab9:
-        st.markdown('<div class="header">🌟 Personalized Recommendations</div>', unsafe_allow_html=True)
-        st.markdown('<div class="subheader">AI-powered stock suggestions based on your preferences</div>', unsafe_allow_html=True)
-        
-        # Get similar stocks
-        similar_stocks = cf_engine.get_similar_stocks(ticker, k=10)
-        
-        if similar_stocks:
-            st.subheader("Stocks Similar to Your Selection")
-            st.write(f"Based on your interest in **{ticker}**, you might like:")
-            
-            cols = st.columns(3)
-            for i, stock in enumerate(similar_stocks[:3]):
-                with cols[i]:
-                    st.markdown(f"""
-                    <div class="feature-card">
-                        <h4>{stock}</h4>
-                        <p>Similarity score: {random.uniform(85, 95):.1f}%</p>
-                        <button class="stButton" onclick="window.location.href='#recommendations'">Explore</button>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            # Track A/B test view
-            ab_test.record_metric(st.session_state.ab_group, "views")
-            
-            # Personalized recommendations
-            st.subheader("Personalized Recommendations")
-            st.write("Curated based on your risk profile and investment goals:")
-            
-            # Get stock features for personalization
-            stock_features = {}
-            for stock in default_tickers:
-                try:
-                    stock_data = get_stock_data(stock, start_date, end_date)
-                    if not stock_data.empty:
-                        stock_features[stock] = [
-                            calculate_volatility(stock_data) if len(stock_data) > 30 else 20,
-                            calculate_annual_return(stock_data, start_date, end_date) * 100,
-                            stock_data['Close'].iloc[-1] if 'Close' in stock_data.columns else 100,
-                            random.uniform(0.5, 2.0)  # Simulated growth potential
-                        ]
-                except:
-                    continue
-            
-            # Get personalized recommendations
-            context_features = []
-            stocks = []
-            for stock, features in stock_features.items():
-                stocks.append(stock)
-                context_features.append(features)
-            
-            personalized_recs = personalization_engine.get_recommendations(
-                st.session_state.user_id,
-                stocks,
-                context_features
-            )
-            
-            # Apply diversity
-            embeddings = {s: np.random.rand(10) for s in personalized_recs}  # Simulated embeddings
-            diversified_recs = mmr_diversify(personalized_recs, embeddings, lambda_param=0.7)
-            
-            cols = st.columns(3)
-            for i, stock in enumerate(diversified_recs[:3]):
-                with cols[i]:
-                    st.markdown(f"""
-                    <div class="feature-card">
-                        <h4>{stock}</h4>
-                        <p>Predicted return: {random.uniform(5, 25):.1f}%</p>
-                        <p>Risk level: {'Low' if random.random() > 0.6 else 'Medium' if random.random() > 0.3 else 'High'}</p>
-                        <button class="stButton" onclick="window.location.href='#recommendations'">Analyze</button>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            # A/B testing metrics
-            if st.button("I'm interested in these", key="rec_interest"):
-                ab_test.record_metric(st.session_state.ab_group, "clicks")
-                st.success("Thanks for your feedback! We'll refine your recommendations.")
-            
-            # Show A/B test results
-            if st.checkbox("Show A/B Test Performance"):
-                lift_results = ab_test.calculate_lift()
-                st.metric("Engagement Lift", f"{lift_results['lift']:.1f}%")
-                st.metric("Statistical Significance", "Yes" if lift_results['significant'] else "No")
-                st.metric("P-value", f"{lift_results['p_value']:.4f}")
-                
-                # Show group allocation
-                st.write(f"You are in the **{st.session_state.ab_group}** group")
-        else:
-            st.warning("Not enough data to generate recommendations. Please analyze more stocks.")
 
 if __name__ == "__main__":
     main()
