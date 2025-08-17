@@ -20,6 +20,10 @@ shap
 optuna
 redis
 dask
+distributed
+aiohttp 
+nest_asyncio
+joblib 
 schedule
 mlflow
 faiss-cpu
