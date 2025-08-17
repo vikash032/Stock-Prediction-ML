@@ -46,7 +46,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Initialize MLflow
-mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+import mlflow
+mlflow.set_tracking_uri("file:/tmp/mlruns")
 mlflow.set_experiment("Quantum-Stock-Forecasting")
 
 # Initialize Dask client
