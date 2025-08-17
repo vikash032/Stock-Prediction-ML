@@ -1926,7 +1926,14 @@ def main():
     # Forecasting Tab
     with tab3:
         st.markdown('<div class="subheader">Hybrid Prophet-TFT Forecasting</div>', unsafe_allow_html=True)
+            # Forecasting Tab
+    with tab3:
+        st.markdown('<div class="subheader">Hybrid Prophet-TFT Forecasting</div>', unsafe_allow_html=True)
         
+        # Initialize variables to track forecasting success
+        prophet_success = False
+        tft_success = False
+
         if data.empty:
             st.error("No data available for forecasting. Please select a different ticker or date range.")
         else:
@@ -1963,7 +1970,8 @@ def main():
                         prophet_forecast_df['yhat'].iloc[-30-forecast_days:-forecast_days]
                     ))
                     rt_monitor.monitor_performance("Prophet", prophet_rmse)
-                    
+
+                    prophet_success = True
             except Exception as e:
                 st.error(f"Prophet forecasting error: {str(e)}")
             
@@ -2040,12 +2048,13 @@ def main():
                         st.subheader("TFT Feature Importance")
                         fig_shap = plot_shap_values(tft_results['shap_values'], data[tft_results['features']])
                         st.pyplot(fig_shap)
-            
+
+                    tft_success = True
             except Exception as e:
                 st.error(f"TFT forecasting error: {str(e)}")
             
             # Ensemble Forecasting
-            if enable_ensemble and not data.empty and 'prophet_forecast_df' in locals() and 'tft_results' in locals():
+            if enable_ensemble and prophet_success and tft_success:
                 try:
                     with st.spinner('Combining forecasts with ensemble model...'):
                         combined_forecast, prophet_weight, tft_weight = ensemble_forecast(
@@ -2094,6 +2103,7 @@ def main():
                 
                 except Exception as e:
                     st.error(f"Ensemble forecasting error: {str(e)}")
+
 
     # Sentiment Analysis Tab
     with tab4:
