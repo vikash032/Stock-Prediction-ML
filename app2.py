@@ -50,7 +50,7 @@ mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 mlflow.set_experiment("Quantum-Stock-Forecasting")
 
 # Initialize Dask client
-client = Client(n_workers=4, threads_per_worker=2, memory_limit='3GB')
+client = Client(n_workers=4, threads_per_worker=2, memory_limit='2GB')
 
 # avoid heavy imports at top-level
 def load_model():
