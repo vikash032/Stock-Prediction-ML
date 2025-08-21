@@ -2186,7 +2186,7 @@ def main():
             col_m5.markdown(f"""
                 <div class="macro-metric">
                     <h5>Consumer Sentiment</h5>
-                    <h3>{macro_data['consumer_sentiment']}</极3>
+                    <h3>{macro_data['consumer_sentiment']}</3>
                     <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
@@ -2262,12 +2262,12 @@ def main():
         st.subheader("Personalized Recommendations")
         st.markdown(f"""
         <div class="feature-card">
-            <h4>Based on your profile: {user_risk_profile} risk, {user_investment_goal极} focus</h4>
+            <h4>Based on your profile: {user_risk_profile} risk, {user_investment_goal} focus</h4>
             <ul>
                 <li><b>Asset Allocation:</b> {np.random.randint(60,80)}% equities, {np.random.randint(20,30)}% bonds, {np.random.randint(5,15)}% alternatives</li>
                 <li><b>Sector Focus:</b> Technology ({np.random.randint(30,40)}%), Healthcare ({np.random.randint(15,25)}%), Financials ({np.random.randint(10,20)}%)</li>
                 <li><b>Position Sizing:</b> Limit single positions to {np.random.randint(5,10)}% of portfolio</li>
-                <极i><b>Rebalancing:</b> Quarterly rebalancing recommended</li>
+                <i><b>Rebalancing:</b> Quarterly rebalancing recommended</li>
                 <li><b>Tax Optimization:</b> {'Tax-loss harvesting' if np.random.random() > 0.5 else 'Long-term holding strategy'}</li>
             </ul>
         </div>
@@ -2277,7 +2277,7 @@ def main():
         st.subheader("Market Insights")
         st.markdown(f"""
         <div class="feature-card">
-            <h4极>Current Market Conditions</h4>
+            <h4>Current Market Conditions</h4>
             <p>Our analysis of macroeconomic factors and market sentiment indicates:</p>
             <ul>
                 <li><b>Market Phase:</b> {'Bull market' if sentiment_value > 60 else 'Bear market' if sentiment_value < 40 else 'Neutral market'}</li>
@@ -2360,7 +2360,7 @@ def main():
                 ))
             
             # Add trade markers
-            if 'trades极' in results:
+            if 'trades' in results:
                 buy_dates = [t[1] for t in results['trades'] if t[0] == 'buy']
                 buy_prices = [t[2] for t in results['trades'] if t[0] == 'buy']
                 sell_dates = [t[1] for t in results['trades'] if t[0] == 'sell']
@@ -2391,7 +2391,7 @@ def main():
                 yaxis2=dict(
                     title='Portfolio Value',
                     overlaying='y',
-                    side极='right',
+                    side='right',
                     showgrid=False
                 ),
                 template='plotly_dark',
@@ -2433,7 +2433,7 @@ def main():
         st.subheader("Model Performance Monitoring")
         if rt_monitor.performance_history:
             perf_df = pd.DataFrame(rt_monitor.performance_history)
-            fig_per极 = px.line(perf_df, x='timestamp', y='rmse', color='model', 
+            fig_perf = px.line(perf_df, x='timestamp', y='rmse', color='model', 
                               title='Model RMSE Over Time', markers=True)
             fig_perf.update_layout(template='plotly_dark')
             st.plotly_chart(fig_perf, use_container_width=True)
