@@ -2069,8 +2069,8 @@ def main():
                 actual_returns[t] = calculate_annual_return(stock_data, start_date, end_date) * 100
 
             st.subheader("Optimized Portfolio Allocation")
-            
-极            # Create allocation dataframe
+
+            # Create allocation dataframe
             allocation_df = pd.DataFrame({
                 'Stock': portfolio_data.columns,
                 'Weight': [f"{w*100:.2f}%" for w in weights],
@@ -2162,7 +2162,7 @@ def main():
             col_m2.markdown(f"""
                 <div class="macro-metric">
                     <h5>Interest Rate</h5>
-                    <h3>{macro_data['interest_rate']极}%</h3>
+                    <h3>{macro_data['interest_rate']}%</h3>
                     <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
@@ -2314,7 +2314,7 @@ def main():
             params['oversold'] = st.slider("Oversold Level", 0, 40, 30)
             params['overbought'] = st.slider("Overbought Level", 60, 100, 70)
         elif strategy == "Bollinger Band Reversion":
-            params['bb_period'] = st.slider("Bollinger Period", 10, 50极, 20)
+            params['bb_period'] = st.slider("Bollinger Period", 10, 50, 20)
             params['std_dev'] = st.slider("Standard Deviations", 1.0, 3.0, 2.0)
         elif strategy == "MACD Crossover":
             params['fast'] = st.slider("Fast EMA", 5, 20, 12)
@@ -2363,7 +2363,7 @@ def main():
             if 'trades极' in results:
                 buy_dates = [t[1] for t in results['trades'] if t[0] == 'buy']
                 buy_prices = [t[2] for t in results['trades'] if t[0] == 'buy']
-                sell_dates = [t[1] for t in results['trades'] if极 t[0] == 'sell']
+                sell_dates = [t[1] for t in results['trades'] if t[0] == 'sell']
                 sell_prices = [t[2] for t in results['trades'] if t[0] == 'sell']
                 
                 if buy_dates:
