@@ -1745,7 +1745,7 @@ def main():
                 fig_tech.add_trace(go.Scatter(
                     x=data.index, y=data['Close'],
                     mode='lines', name='Close',
-                    line极=dict(color='#4F8BF9')
+                    line=dict(color='#4F8BF9')
                 ))
                 
                 if 'MACD' in data.columns:
