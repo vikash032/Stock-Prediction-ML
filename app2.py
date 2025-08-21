@@ -242,7 +242,7 @@ def load_sentiment_model():
             logger.error(f"Failed to load alternative model: {str(e2)}")
             # Fallback to a general sentiment model
             logger.info("Using general sentiment model as fallback")
-            return pipeline("极entiment-analysis")
+            return pipeline("sentiment-analysis")
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_news(ticker):
@@ -259,7 +259,7 @@ def get_news(ticker):
         "VMM.NS": "Vishal Mega Mart",
         "SAGILITY.NS": "Sagility India",
         "TATAMOTORS.NS": "Tata Motors",
-        "TCS.极": "TCS",
+        "TCS.NS": "TCS",
         "SBIN.NS": "SBI",
         "KALYANKJIL.NS": "Kalyan Jewellers",
         "SWANENERGY.NS": "Swan Energy",
@@ -278,7 +278,7 @@ def get_news(ticker):
         "KOTAKBANK.NS": "Kotak Mahindra Bank",
         "ITC.NS": "ITC",
         "ASIANPAINT.NS": "Asian Paints",
-        "MARUTI.NS极": "Maruti Suzuki",
+        "MARUTI.NS": "Maruti Suzuki",
         "TITAN.NS": "Titan Company",
         "SUNPHARMA.NS": "Sun Pharma"
     }
@@ -315,10 +315,10 @@ def prophet_forecast(data, forecast_days, country='IN'):
         raise ValueError("Need at least 90 days of data for forecasting")
     
     # Create holiday dataframe for the country
-    years = pd.date_range(start=data.index.min(), end=data.index.max() + timedelta(days极forecast_days)).year
+    years = pd.date_range(start=data.index.min(), end=data.index.max() + timedelta(days=forecast_days)).year
     all_years = list(range(min(years), max(years)+1))
     country_holidays = holidays.CountryHoliday(country, years=all_years)
-    holiday_df = pd.DataFrame([(date, name极 for date, name in country_holidays.items()], columns=['ds', 'holiday'])
+    holiday_df = pd.DataFrame([(date, name) for date, name in country_holidays.items()], columns=['ds', 'holiday'])
     
     prophet_df = data[['Close']].reset_index()
     prophet_df.columns = ['ds', 'y']
@@ -372,7 +372,7 @@ def prepare_portfolio_data(tickers, start_date, end_date):
                 continue
             price_data[ticker] = df['Close']
         except Exception as e:
-            logger.error(f"Error loading {极icker}: {str(e)}")
+            logger.error(f"Error loading {ticker}: {str(e)}")
             continue
 
     if not price_data:
@@ -395,7 +395,7 @@ def optimize_portfolio(returns, risk_tolerance):
     gamma = cp.Parameter(nonneg=True)
     gamma.value = risk_tolerance
 
-    ret极 mu.T @ w
+    ret = mu.T @ w
     risk = cp.quad_form(w, Sigma)
 
     prob = cp.Problem(cp.Maximize(ret - gamma * risk),
@@ -497,7 +497,7 @@ def backtest_strategy(data, strategy, params):
     total_return = (portfolio.iloc[-1] / portfolio.iloc[0] - 1) * 100
     
     # Calculate max drawdown
-    peak = portfolio极cummax()
+    peak = portfolio.cummax()
     drawdown = (portfolio - peak) / peak
     max_drawdown = drawdown.min() * 100
     
@@ -551,7 +551,7 @@ class RealTimeMonitor:
         # Retrain every week or if performance degrades
         return (datetime.now() - self.last_retrain).days >= 7
     
-   极 send_alert(self, message):
+    def send_alert(self, message):
         """Send alert notification"""
         try:
             # Email configuration
@@ -561,7 +561,7 @@ class RealTimeMonitor:
             smtp_password = os.getenv('SMTP_PASSWORD')
             recipient = os.getenv('ALERT_RECIPIENT')
             
-            if not all([s极tp_server, smtp_user, smtp_password, recipient]):
+            if not all([smtp_server, smtp_user, smtp_password, recipient]):
                 logger.warning("Alert configuration incomplete")
                 return
             
@@ -626,7 +626,7 @@ def calculate_annual_return(data, start_date, end_date):
     
     # Calculate actual holding period in years
     days_held = (filtered.index[-1] - filtered.index[0]).days
-    years_held = days极held / 365.25
+    years_held = days_held / 365.25
     
     # Avoid division by zero
     if years_held == 0:
@@ -669,7 +669,7 @@ def create_options_payoff(strike_price, premium, option_type, num_contracts=1):
     contract_size = 100  # Standard contract size
     
     if option_type == 'call':
-        payoff = np.maximum(stock_prices - strike_price, 0) * contract_size * num_contract极 - (premium * contract_size * num_contracts)
+        payoff = np.maximum(stock_prices - strike_price, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
     else:  # put
         payoff = np.maximum(strike_price - stock_prices, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
     
@@ -678,7 +678,7 @@ def create_options_payoff(strike_price, premium, option_type, num_contracts=1):
 def get_earnings_data(ticker):
     """Get earnings data for a stock with realistic dates"""
     try:
-        # Try极 get real earnings data
+        # Try to get real earnings data
         company = yf.Ticker(ticker)
         earnings = company.earnings_dates
         
@@ -693,7 +693,7 @@ def get_earnings_data(ticker):
                 mock_earnings = pd.DataFrame({
                     'Earnings Date': dates,
                     'EPS Estimate': np.random.uniform(0.5, 2.5, 4),
-                    'Reported EPS': np.random.uniform(0.4, 2.6极 4),
+                    'Reported EPS': np.random.uniform(0.4, 2.6, 4),
                     'Surprise (%)': np.random.uniform(-15, 15, 4)
                 })
                 mock_earnings.set_index('Earnings Date', inplace=True)
@@ -747,7 +747,7 @@ def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="M
         Our hybrid forecasting model predicts:
         - Short-term (1 month): {np.random.uniform(-5,10):.1f}% change
         - Medium-term (3 months): {np.random.uniform(-10,20):.1f}% change
-        - Long-term (1 year): {np.random.uniform(-15,30):.1f极 change
+        - Long-term (1 year): {np.random.uniform(-15,30):.1f}% change
         Technical indicators: 
         - Support level: ${current_price * 0.95:.2f}
         - Resistance level: ${current_price * 1.05:.2f}
@@ -761,11 +761,11 @@ def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="M
         """,
         "buy": f"""
         Based on current technicals and fundamentals:
-        - Current price: ${current_price:.2极}
+        - Current price: ${current_price:.2f}
         - Target price: ${current_price * 1.12:.2f} (12% upside)
         - Stop loss: ${current_price * 0.92:.2f} (8% downside)
-        - Risk-reward ratio: 极:{np.random.uniform(1.5,3.0):.1f}
-        Recommendation: {'Strong buy' if rsi < 40 and macd > 0 else 'Buy' if r极 < 50 else 'Accumulate on dips'}
+        - Risk-reward ratio: 1:{np.random.uniform(1.5,3.0):.1f}
+        Recommendation: {'Strong buy' if rsi < 40 and macd > 0 else 'Buy' if rsi < 50 else 'Accumulate on dips'}
         """,
         "sell": f"""
         Analysis suggests:
@@ -823,16 +823,16 @@ def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="M
         return responses["default"]
 
 def get_macro_data():
-    """Get accurate macroeconomic data for India"""
-    # Updated with accurate data based on verification results
+    """Get macroeconomic data for India with realistic values"""
+    # Placeholder - in real implementation, use API
     return {
-        'inflation': 1.55,  # Updated to accurate value
-        'interest_rate': 5.50,  # Updated to accurate RBI repo rate
-        'unemployment': 5.2,  # Updated to accurate value
-        'gdp_growth': 7.4,  # Updated to accurate value
-        'consumer_sentiment': 96.5,  # Updated to accurate value
-        'manufacturing_pmi': 59.8,  # Updated to accurate value
-        'source': 'RBI / MOSPI / Trading Economics',
+        'inflation': 4.5,
+        'interest_rate': 6.5,
+        'unemployment': 7.2,
+        'gdp_growth': 6.8,
+        'consumer_sentiment': 68.4,
+        'manufacturing_pmi': 55.7,
+        'source': 'RBI / MOSPI',
         'last_updated': datetime.now().strftime('%Y-%m-%d')
     }
 
@@ -905,7 +905,7 @@ CUSTOM_CSS = """
         --vibrant-red: rgba(220, 20, 60, 0.8);
         --vibrant-pink: rgba(255, 20, 147, 0.8);
         --vibrant-cyan: rgba(0, 255, 255, 0.8);
-        --vibrant-teal: rgba极, 150, 136, 0.8);
+        --vibrant-teal: rgba(0, 150, 136, 0.8);
     }
     
     * {
@@ -942,7 +942,7 @@ CUSTOM_CSS = """
         font-size: 1.8rem;
         font-weight: 700;
         background: linear-gradient(90deg, var(--accent), var(--accent2));
-        -webkit-background-clip极 text;
+        -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         border-bottom: 3px solid var(--accent);
         padding-bottom: 10px;
@@ -995,7 +995,7 @@ CUSTOM_CSS = """
         color: white !important;
         border-radius: 30px !important;
         font-weight: 600 !important;
-        padding: 10px 25px !important;
+        padding: 10极 25px !important;
         border: none !important;
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
         transition: all 0.3s ease;
@@ -1011,9 +1011,9 @@ CUSTOM_CSS = """
         top: -2px;
         left: -2px;
         right: -2px;
-        bottom: -2极;
-        background: linear-gradient(45deg, #1d976c极 #93f9b9, #00b8d4, #0052d4);
-        z-index: -极;
+        bottom: -2px;
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b极d4, #0052d4);
+        z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
         background-size: 400% 400%;
@@ -1055,7 +1055,7 @@ CUSTOM_CSS = """
         background-size: 400% 400%;
     }
     
-    @keyframes fade极 {
+    @keyframes fadeIn {
         from { opacity: 0; transform: translateY(20px); }
         to { opacity: 1; transform: translateY(0); }
     }
@@ -1072,13 +1072,13 @@ CUSTOM_CSS = """
     
     .negative {
         border-left: 6px solid var(--danger);
-        background: linear-gradient(135deg, rgba(244, 67, 54, 0.3), var(--vibrant-green));
+        background: linear-gradient(135极deg, rgba(244, 67, 54, 0.3), var(--vibrant-green));
     }
     
     .neutral {
         border-left: 6px solid var(--info);
         background: linear-gradient(135deg, rgba(41, 98, 255, 0.3), var(--vibrant-green));
-极    }
+    }
     
     .news-item a {
         color: #1a2a6c !important;
@@ -1098,14 +1098,14 @@ CUSTOM_CSS = """
         padding: 25px;
         margin: 20px 0;
         border: 1px solid var(--card-border);
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 极.1);
         transition: all 0.4s ease;
         backdrop-filter: blur(10px);
         animation: cardAppear 0.8s ease-out;
         color: white;
         position: relative;
         overflow: hidden;
-        z-index: 极;
+        z-index: 1;
     }
     
     .feature-card::before {
@@ -1115,16 +1115,16 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9极 #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
-极       filter: blur(5px);
+        filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
         background-size: 400% 400%;
     }
     
     @keyframes cardAppear {
         0% { opacity: 0; transform: scale(0.95); }
-        100% { opacity: 1; transform: scale(1); }
+        100% { opacity: 极; transform: scale(1); }
     }
     
     .feature-card:hover {
@@ -1172,10 +1172,10 @@ CUSTOM_CSS = """
     
     .gauge {
         text-align: center;
-        padding: 20极;
+        padding: 20px;
         border-radius: 15px;
         background: linear-gradient(90deg, var(--danger) 0%, var(--warning) 50%, var(--success) 100%);
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 极.3);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
         margin: 20px 0;
         animation: pulse 2s infinite;
         position: relative;
@@ -1190,7 +1190,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #极d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1200,7 +1200,7 @@ CUSTOM_CSS = """
     @keyframes pulse {
         0% { box-shadow: 0 0 0 0 rgba(0, 200, 83, 0.4); }
         70% { box-shadow: 0 0 0 15px rgba(0, 200, 83, 0); }
-        100% { box-shadow: 0 极 0 0 rgba(0, 200, 83, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(0, 200, 83, 0); }
     }
     
     .gauge-value {
@@ -1230,9 +1230,9 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d极);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
-        filter: blur(5极);
+        filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
         background-size: 400% 400%;
     }
@@ -1257,12 +1257,12 @@ CUSTOM_CSS = """
     }
     
     .ai-response {
-        background: linear-gradient(135deg, var(--vibrant-teal), var(--vibrant-cyan));
+        background: linear-gradient(135deg, var(--vibrant-teal极), var(--vibrant-cyan));
         padding: 25px;
         border-radius: 15px;
         margin-top: 20px;
         border-left: 4px solid var(--accent);
-        box-shadow: 0 10极 25px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
         backdrop-filter: blur(10px);
         animation: fadeIn 0.8s ease-out;
         position: relative;
@@ -1323,7 +1323,7 @@ CUSTOM_CSS = """
     .strategy-card h4 {
         color: var(--accent);
         font-size: 1.5rem;
-        margin-bottom: 15px;
+        margin-bottom: 15极;
     }
     
     .macro-metric {
@@ -1335,7 +1335,7 @@ CUSTOM_CSS = """
         box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
         backdrop-filter: blur(10px);
         border: 1px solid var(--card-border);
-        transition: all 0.3极 ease;
+        transition: all 0.3s ease;
         position: relative;
         overflow: hidden;
         z-index: 1;
@@ -1371,9 +1371,9 @@ CUSTOM_CSS = """
     .options-payoff {
         background: linear-gradient(135deg, var(--vibrant-teal), var(--vibrant-orange));
         border-radius: 15px;
-        padding: 25px;
+        padding极: 25px;
         margin: 20px 0;
-        border: 1px solid var(--card-border);
+        border: 1px solid var(--极ard-border);
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
         backdrop-filter: blur(10px);
         position: relative;
@@ -1398,7 +1398,7 @@ CUSTOM_CSS = """
     .stAlert {
         border-radius: 15px !important;
         box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3) !important;
-极       backdrop-filter: blur(10px) !important;
+        backdrop-filter: blur(10px) !important;
         border: 1px solid var(--card-border) !important;
         position: relative;
         overflow: hidden;
@@ -1409,7 +1409,7 @@ CUSTOM_CSS = """
         content: '';
         position: absolute;
         top: -2px;
-        left极 -2px;
+        left: -2px;
         right: -2px;
         bottom: -2px;
         background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
@@ -1471,7 +1471,7 @@ def main():
     default_tickers = [
         "NTPC.NS", "VMM.NS", "SAGILITY.NS", "TATAMOTORS.NS",
         "TCS.NS", "SBIN.NS", "KALYANKJIL.NS", "SWANENERGY.NS", "PRAJIND.NS",
-        "RELIANCE.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", "HINDUNILVR.NS",
+        "RELIANCE.NS", "HDFCBANK.NS", "INFY.极", "ICICIBANK.NS", "HINDUNILVR.NS",
         "BAJFINANCE.NS", "LT.NS", "AXISBANK.NS", "ADANIENT.NS", "BHARTIARTL.NS",
         "HCLTECH.NS", "KOTAKBANK.NS", "ITC.NS", "ASIANPAINT.NS", "MARUTI.NS",
         "TITAN.NS", "SUNPHARMA.NS"
@@ -1479,7 +1479,7 @@ def main():
 
     ticker = st.sidebar.selectbox("📊 Select Stock", default_tickers, index=0)
     start_date = st.sidebar.date_input("📅 Start Date", datetime.now() - timedelta(days=365))
-    end_date = st极sidebar.date_input("📅 End Date", datetime.now())
+    end_date = st.sidebar.date_input("📅 End Date", datetime.now())
     forecast_days = st.sidebar.slider("🔮 Forecast Days", 30, 90, 60)
     risk_tolerance = st.sidebar.slider("⚠️ Risk Tolerance (1=Low, 10=High)", 1, 10, 5)
     portfolio_size = st.sidebar.number_input("💰 Portfolio Size ($)", 10000, 1000000, 50000)
@@ -1600,7 +1600,7 @@ def main():
                 <h4>🔮 Hybrid Forecasting</h4>
                 <ul>
                     <li>Prophet time-series forecasting</li>
-                    <li>Lightweight trend + volatility model</li>
+                    <li>Lightweight trend + volatility model</极i>
                     <li>Confidence interval projections</li>
                     <li>Risk assessment metrics</li>
                 </ul>
@@ -1609,7 +1609,7 @@ def main():
             
         with col3:
             st.markdown("""
-            <极iv class="feature-card">
+            <div class="feature-card">
                 <h4>💹 Portfolio Optimization</h4>
                 <ul>
                     <li>Modern Portfolio Theory (MPT) implementation</li>
@@ -1650,7 +1650,7 @@ def main():
         with col5:
             st.markdown("""
             <div class="feature-card" style="text-align:center;">
-                <h3 style="极or:white;">Tech Stack</h3>
+                <h3 style="color:white;">Tech Stack</h3>
                 <div style="font-size:3rem;">🤖</div>
                 <p><strong>AI-Powered Analytics</strong></p>
                 <ul style="text-align:left;">
@@ -1659,8 +1659,8 @@ def main():
                     <li>FinBERT NLP</li>
                     <li>CVXPY Optimization</li>
                 </ul>
-                <p><strong>Real-Time Data</strong></极>
-                <ul style="text-align:left;">
+                <p><strong>Real-Time Data</strong></p>
+                <ul style极="text-align:left;">
                     <li>Yahoo Finance API</li>
                     <li>NewsAPI Integration</li>
                     <li>Streamlit Live Updates</li>
@@ -1675,12 +1675,12 @@ def main():
             <ol style="font-size:1.1em;">
                 <li><b style="color:#00c853;">Select a stock</b> from the sidebar dropdown</li>
                 <li><b style="color:#00c853;">Adjust date ranges</b> and forecast periods</li>
-                <li><b style="color:#00c853;">Explore different tabs</b> for various analyses</极i>
+                <li><b style="color:#00c853;">Explore different tabs</b> for various analyses</li>
                 <li><b style="color:#00c853;">Build portfolios</b> with multiple stocks</li>
                 <li><b style="color:#00c853;">Ask questions</b> to the AI Assistant</li>
                 <li><b style="color:#00c853;">Test strategies</b> with historical data</li>
             </ol>
-            <div style="text-align:center; margin-top:20px; padding:10px; background:rgba极0,200,83,0.1); border-radius:10px;">
+            <div style="text-align:center; margin-top:20px; padding:10px; background:rgba(0,200,83,0.1); border-radius:10px;">
                 <span style="font-size:2em;">👉</span>
                 <span style="color:white; font-weight:bold; font-size:1.3em;">Use the sidebar to get started!</span>
                 <span style="font-size:2em;">👈</span>
@@ -1756,7 +1756,7 @@ def main():
                     ))
                 
                 if 'MACD_Signal' in data.columns:
-                    fig_tech.add_trace极(go.Scatter(
+                    fig_tech.add_trace(go.Scatter(
                         x=data.index, y=data['MACD_Signal'],
                         mode='lines', name='Signal',
                         line=dict(color='#00FF00')
@@ -1787,7 +1787,7 @@ def main():
                 )
                 
                 # Add overbought/oversold lines
-                fig_tech.add_hline(y=70, line_dash="极ash", line_color="red", opacity=0.5, yref="y2")
+                fig_tech.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, yref="y2")
                 fig_tech.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, yref="y2")
                 
                 st.plotly_chart(fig_tech, use_container_width=True)
@@ -1860,7 +1860,7 @@ def main():
                     st.subheader("Prophet Forecast")
                     fig1 = plot_plotly(prophet_model, prophet_forecast_df)
                     fig1.update_layout(
-                        height极500,
+                        height=500,
                         template='plotly_dark',
                         title=f"{ticker} Price Forecast",
                         xaxis_title="Date",
@@ -1898,7 +1898,7 @@ def main():
                     
                     # Use multiple moving averages for prediction
                     if len(data) > 50:
-                        ma20 = data['Close'].rolling(window=20极.mean().iloc[-1]
+                        ma20 = data['Close'].rolling(window=20).mean().iloc[-1]
                         ma50 = data['Close'].rolling(window=50).mean().iloc[-1]
                         
                         # Simple weighted average
@@ -2022,7 +2022,7 @@ def main():
                     fig_earn.add_trace(go.Bar(
                         x=earnings_data.index,
                         y=earnings_data['Surprise (%)'],
-                        name='极arnings Surprise',
+                        name='Earnings Surprise',
                         marker_color=np.where(earnings_data['Surprise (%)'] > 0, 'green', 'red')
                     ))
                     fig_earn.update_layout(
@@ -2042,11 +2042,11 @@ def main():
                     
                     # Earnings Forecast
                     st.markdown("#### Next Earnings Forecast")
-                    next_date = earnings_data.index[-极] + pd.DateOffset(months=3)
+                    next_date = earnings_data.index[-1] + pd.DateOffset(months=3)
                     st.metric("Estimated Date", next_date.strftime("%Y-%m-%d"))
                     
                     col_est1, col_est2 = st.columns(2)
-                    col_极st1.metric("Consensus EPS Estimate", f"{last_earnings['EPS Estimate'] * 1.05:.2f}")
+                    col_est1.metric("Consensus EPS Estimate", f"{last_earnings['EPS Estimate'] * 1.05:.2f}")
                     col_est2.metric("Predicted Surprise", f"{np.random.uniform(-5, 10):.2f}%")
             except Exception as e:
                 st.error(f"Earnings data error: {str(e)}")
@@ -2125,7 +2125,7 @@ def main():
             st.dataframe(allocation_df)
 
             # Portfolio visualization
-            fig =极x.pie(
+            fig = px.pie(
                 names=portfolio_data.columns,
                 values=weights * 100,
                 title='Portfolio Allocation',
@@ -2160,7 +2160,7 @@ def main():
                 lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
             )
             return_df['Actual Return'] = return_df['Actual Return'].apply(
-                lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
+                lambda x:f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
             )
             
             st.dataframe(return_df)
@@ -2288,7 +2288,7 @@ def main():
                 st.markdown(f"""
                 <div class="ai-response">
                     <h4>🔍 AI Analysis</h4>
-                    <p style="font-size:1.1em;">{response}</极>
+                    <p style="font-size:1.1em;">{response}</p>
                     <div style="display:flex; justify-content:space-between; margin-top:20px;">
                         <small>Generated at {datetime.now().strftime('%H:%M:%S')}</small>
                         <small>Risk Profile: {user_risk_profile}</small>
@@ -2296,7 +2296,7 @@ def main():
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
-        
+
         # Portfolio Recommendations
         st.subheader("Personalized Recommendations")
         st.markdown(f"""
@@ -2311,7 +2311,7 @@ def main():
             </ul>
         </div>
         """, unsafe_allow_html=True)
-        
+
         # Market Insights
         st.subheader("Market Insights")
         st.markdown(f"""
@@ -2324,14 +2324,15 @@ def main():
                 <li><b>Key Opportunity:</b> {'Technology sector' if np.random.random() > 0.5 else 'Emerging markets'}</li>
                 <li><b>Key Risk:</b> {'Interest rate hikes' if np.random.random() > 0.5 else 'Geopolitical tensions'}</li>
                 <li><b>Portfolio Action:</b> {'Rebalance towards value stocks' if np.random.random() > 0.5 else 'Increase cash position'}</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
+           </ul>
+       </div>
+       """, unsafe_allow_html=True)
+        
 
     # Strategy Tester Tab
     with tab7:
         st.markdown('<div class="header">🧪 Strategy Backtesting</div>', unsafe_allow_html=True)
-        st.markdown('<div class="极ubheader">Test trading strategies with historical data</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subheader">Test trading strategies with historical data</div>', unsafe_allow_html=True)
         
         # Strategy selection
         st.subheader("Select Strategy")
@@ -2360,7 +2361,7 @@ def main():
             params['slow'] = st.slider("Slow EMA", 15, 50, 26)
             params['signal'] = st.slider("Signal Period", 5, 20, 9)
         elif strategy == "Golden Cross":
-            params['short_ma'] = st.s极ider("Short MA", 20, 100, 50)
+            params['short_ma'] = st.slider("Short MA", 20, 100, 50)
             params['long_ma'] = st.slider("Long MA", 100, 300, 200)
         
         # Backtest button
@@ -2402,7 +2403,7 @@ def main():
             if 'trades' in results:
                 buy_dates = [t[1] for t in results['trades'] if t[0] == 'buy']
                 buy_prices = [t[2] for t in results['trades'] if t[0] == 'buy']
-                sell_dates = [t[1] for t in results['trades'] if t[0] == 'sell']
+                sell_dates = [t[2] for t in results['trades'] if t[0] == 'sell']
                 sell_prices = [t[2] for t in results['trades'] if t[0] == 'sell']
                 
                 if buy_dates:
@@ -2420,7 +2421,7 @@ def main():
                         y=sell_prices,
                         mode='markers',
                         name='Sell',
-                        marker极dict(color='red', size=10, symbol='triangle-down')
+                        marker=dict(color='red', size=10, symbol='triangle-down')
                     ))
             
             fig_backtest.update_layout(
@@ -2465,7 +2466,7 @@ def main():
         # Real-time price chart
         st.subheader("Real-Time Price Movement")
         # Placeholder for real-time chart
-        st.info("Real-time chart integration requires WebSocket connection极 market data API")
+        st.info("Real-time chart integration requires WebSocket connection to market data API")
         
         # Model monitoring
         st.subheader("Model Performance Monitoring")
