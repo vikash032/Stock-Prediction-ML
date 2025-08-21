@@ -2160,7 +2160,7 @@ def main():
                 lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
             )
             return_df['Actual Return'] = return_df['Actual Return'].apply(
-                lambda x:极"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
+                lambda x:f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
             )
             
             st.dataframe(return_df)
@@ -2173,7 +2173,7 @@ def main():
                 x=corr.columns,
                 y=corr.index,
                 colorscale='RdYlGn',
-                z极in=-1,
+                zmin=-1,
                 zmax=1,
                 text=np.round(corr.values, 2),
                 texttemplate="%{text}"
@@ -2181,7 +2181,7 @@ def main():
             fig_corr.update_layout(
                 height=600,
                 title="Stock Correlation Heatmap",
-                template='plotly极ark'
+                template='plotly_dark'
             )
             st.plotly_chart(fig_corr, use_container_width=True)
             
@@ -2204,7 +2204,7 @@ def main():
                     <h3>{macro_data['interest_rate']}%</h3>
                     <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
-                </极iv>
+                </div>
             """, unsafe_allow_html=True)
             col_m3.markdown(f"""
                 <div class="macro-metric">
@@ -2218,7 +2218,7 @@ def main():
                 <div class="macro-metric">
                     <h5>GDP Growth</h5>
                     <h3>{macro_data['gdp_growth']}%</h3>
-                    <small极Source: {macro_data['source']}</small>
+                    <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
             """, unsafe_allow_html=True)
@@ -2232,7 +2232,7 @@ def main():
             """, unsafe_allow_html=True)
             col_m6.markdown(f"""
                 <div class="macro-metric">
-                    <极5>Manufacturing PMI</h5>
+                    <h5>Manufacturing PMI</h5>
                     <h3>{macro_data['manufacturing_pmi']}</h3>
                     <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
@@ -2323,7 +2323,7 @@ def main():
                 <li><b>Recommended Strategy:</b> {'Growth focus' if sentiment_value > 60 else 'Defensive positioning' if sentiment_value < 40 else 'Balanced approach'}</li>
                 <li><b>Key Opportunity:</b> {'Technology sector' if np.random.random() > 0.5 else 'Emerging markets'}</li>
                 <li><b>Key Risk:</b> {'Interest rate hikes' if np.random.random() > 0.5 else 'Geopolitical tensions'}</li>
-                <li><b极Portfolio Action:</b> {'Rebalance towards value stocks' if np.random.random() > 0.5 else 'Increase cash position'}</li>
+                <li><b>Portfolio Action:</b> {'Rebalance towards value stocks' if np.random.random() > 0.5 else 'Increase cash position'}</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -2370,7 +2370,7 @@ def main():
                 
             # Display results
             st.subheader("Backtest Results")
-            col_res1, col_res2, col_res3, col极es4 = st.columns(4)
+            col_res1, col_res2, col_res3, col_res4 = st.columns(4)
             col_res1.metric("Total Return", f"{results['return']:.2f}%")
             col_res2.metric("Max Drawdown", f"{results['drawdown']:.2f}%")
             col_res3.metric("Sharpe Ratio", f"{results['sharpe']:.2f}")
@@ -2389,7 +2389,7 @@ def main():
             ))
             
             if 'portfolio' in results and len(results['portfolio']) > 0:
-                fig_backtest.add_trace极(go.Scatter(
+                fig_backtest.add_trace(go.Scatter(
                     x=data.index[params.get('long_window', 50):][:len(results['portfolio'])],
                     y=results['portfolio'],
                     mode='lines',
@@ -2402,12 +2402,12 @@ def main():
             if 'trades' in results:
                 buy_dates = [t[1] for t in results['trades'] if t[0] == 'buy']
                 buy_prices = [t[2] for t in results['trades'] if t[0] == 'buy']
-                sell_dates = [t[极] for t in results['trades'] if t[0] == 'sell']
+                sell_dates = [t[2] for t in results['trades'] if t[0] == 'sell']
                 sell_prices = [t[2] for t in results['trades'] if t[0] == 'sell']
                 
                 if buy_dates:
                     fig_backtest.add_trace(go.Scatter(
-                        x=b极y_dates,
+                        x=buy_dates,
                         y=buy_prices,
                         mode='markers',
                         name='Buy',
