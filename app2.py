@@ -2458,7 +2458,7 @@ def main():
         else:
             next_retrain = rt_monitor.last_retrain + timedelta(days=7)
             st.info(f"Models up to date. Next retraining scheduled for {next_retrain.strftime('%Y-%m-%d')}")
-
+    
     # Market Indices Tab
     with tab9:
         st.markdown('<div class="header">📊 Market Indices</div>', unsafe_allow_html=True)
@@ -2502,35 +2502,48 @@ def main():
                     logger.error(f"Error fetching {name} data: {str(e)}")
                     index_data[name] = {'current': 0, 'previous': 0, 'change': 0}
                     sentiment_data[name] = "Neutral"
-        
+                
+        # -----------------------
         # Display index performance
+        # -----------------------
         st.subheader("Index Performance")
         col1, col2, col3, col4, col5 = st.columns(5)
-        
         index_cols = [col1, col2, col3, col4, col5]
+
         for i, (name, data) in enumerate(index_data.items()):
+            # guard in case there are more indices than columns
+            if i >= len(index_cols):
+                break
+
             with index_cols[i]:
                 change_color = "green" if data['change'] >= 0 else "red"
                 sentiment = sentiment_data.get(name, "Neutral")
                 sentiment_icon = "📈" if sentiment == "Bullish" else "📉" if sentiment == "Bearish" else "➡️"
-                
+
+                # --- minimal safe fix: pre-format values to avoid f-string parse issues ---
+                current_formatted = "${:,.2f}".format(data.get('current', 0.0))
+                change_formatted = "{:+.2f}%".format(data.get('change', 0.0))
+                sentiment_html = f"{sentiment_icon} {sentiment}"
+
                 st.markdown(f"""
                 <div class="metric-card">
                     <h3>{name}</h3>
-                    <h2>{'$'}{data['current']:,.2f}</h2>
+                    <h2>{current_formatted}</h2>
                     <p style="color:{change_color}; font-size:1.2em;">
-                        {data['change']:+.2f}%
+                        {change_formatted}
                     </p>
-                    <p>{sentiment_icon} {sentiment}</p>
+                    <p>{sentiment_html}</p>
                 </div>
                 """, unsafe_allow_html=True)
-        
-        # Market overview
+
+        # -----------------------
+        # Market overview & summary (outside the loop)
+        # -----------------------
         st.subheader("Market Overview")
-        bullish_count = sum(1 for sentiment in sentiment_data.values() if sentiment == "Bullish")
-        bearish_count = sum(1 for sentiment in sentiment_data.values() if sentiment == "Bearish")
-        neutral_count = sum(1 for sentiment in sentiment_data.values() if sentiment == "Neutral")
-        
+        bullish_count = sum(1 for s in sentiment_data.values() if s == "Bullish")
+        bearish_count = sum(1 for s in sentiment_data.values() if s == "Bearish")
+        neutral_count = sum(1 for s in sentiment_data.values() if s == "Neutral")
+
         col_overview1, col_overview2, col_overview3 = st.columns(3)
         col_overview1.metric("Bullish Indices", bullish_count)
         col_overview2.metric("Bearish Indices", bearish_count)
