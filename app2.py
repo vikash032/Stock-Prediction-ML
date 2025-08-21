@@ -1766,7 +1766,7 @@ def main():
                         yaxis_title='Profit/Loss',
                         template='plotly_dark'
                     )
-                    st.plotly_chart(f_call, use_container_width=True)
+                    st.plotly_chart(fig_call, use_container_width=True)
                     
                 with col2:
                     st.markdown("#### Put Option Payoff")
