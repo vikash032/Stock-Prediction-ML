@@ -2312,6 +2312,14 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
+        # Pehle market phase decide kar
+        if sentiment_value > 60:
+            market_phase = "Bull market"
+        elif sentiment_value < 40:
+            market_phase = "Bear market"
+        else:
+            market_phase = "Neutral market"
+            
         # Define variable 
         market_phase = "Bull market" if sentiment_value > 60 else "Bear market" if sentiment_value < 40 else "Neutral market"
         recommended_strategy = "Growth focus" if sentiment_value > 60 else "Defensive positioning" if sentiment_value < 40 else "Balanced approach"
