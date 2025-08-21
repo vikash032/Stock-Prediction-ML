@@ -1721,7 +1721,7 @@ def main():
                 if len(data) > 50:
                     data['MA50'] = data['Close'].rolling(window=50).mean()
                     fig.add_trace(go.Scatter(
-                        x=data.index, y=data['极A50'],
+                        x=data.index, y=data['A50'],
                         mode='lines', name='50-day MA',
                         line=dict(color='purple', width=2)
                     ))
