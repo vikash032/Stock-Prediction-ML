@@ -2311,7 +2311,7 @@ def main():
             </ul>
         </div>
         """, unsafe_allow_html=True)
-        
+
         # Market Insights
         st.subheader("Market Insights")
         st.markdown(f"""
@@ -2319,14 +2319,15 @@ def main():
             <h4>Current Market Conditions</h4>
             <p>Our analysis of macroeconomic factors and market sentiment indicates:</p>
             <ul>
-                <li><b>Market Phase:</b> {'Bull market' if sentiment_value > 60 else 'Bear market' if sentiment_value < 40 else 'Neutral market'}</li>
-                <li><b>Recommended Strategy:</b> {'Growth focus' if sentiment_value > 60 else 'Defensive positioning' if sentiment_value < 40 else 'Balanced approach'}</li>
+                <li><b>Market Phase:</b> {'Bull market' if sentiment_score > 60 else 'Bear market' if sentiment_score < 40 else 'Neutral market'}</li>
+                <li><b>Recommended Strategy:</b> {'Growth focus' if sentiment_score > 60 else 'Defensive positioning' if sentiment_score < 40 else 'Balanced approach'}</li>
                 <li><b>Key Opportunity:</b> {'Technology sector' if np.random.random() > 0.5 else 'Emerging markets'}</li>
                 <li><b>Key Risk:</b> {'Interest rate hikes' if np.random.random() > 0.5 else 'Geopolitical tensions'}</li>
-                <li><b极Portfolio Action:</b> {'Rebalance towards value stocks' if np.random.random() > 0.5 else 'Increase cash position'}</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
+                <li><b>Portfolio Action:</b> {'Rebalance towards value stocks' if np.random.random() > 0.5 else 'Increase cash position'}</li>
+           </ul>
+       </div>
+       """, unsafe_allow_html=True)
+        
 
     # Strategy Tester Tab
     with tab7:
