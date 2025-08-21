@@ -2226,7 +2226,7 @@ def main():
         st.markdown('<div class="subheader">Get insights and recommendations powered by AI</div>', unsafe_allow_html=True)
         
         # Sample questions
-        col_q1, col_q极, col_q3 = st.columns(3)
+        col_q1, col_q2, col_q3 = st.columns(3)
         with col_q1:
             if st.button("What's the risk profile for this stock?", key="q1"):
                 st.session_state.ai_query = "What's the risk profile for this stock?"
