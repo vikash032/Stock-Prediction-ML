@@ -1669,7 +1669,7 @@ def main():
                 # Calculate moving averages
                 if len(data) > 20:
                     data['MA20'] = data['Close'].rolling(window=20).mean()
-                    fig.add_trace极(go.Scatter(
+                    fig.add_trace(go.Scatter(
                         x=data.index, y=data['MA20'],
                         mode='lines', name='20-day MA',
                         line=dict(color='orange', width=2)
