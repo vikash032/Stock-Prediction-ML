@@ -2517,7 +2517,7 @@ def main():
                 st.markdown(f"""
                 <div class="metric-card">
                     <h3>{name}</h3>
-                    <h2>${data['current']:,.2f}</h2>
+                    <h2>$ {data['current']:,.2f}</h2>
                     <p style="color:{change_color}; font-size:1.2em;">
                         {data['change']:+.2f}%
                     </p>
