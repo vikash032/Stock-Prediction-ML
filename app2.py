@@ -2129,9 +2129,9 @@ def main():
             # Correlation heatmap
             st.subheader("Stock Correlation Matrix")
             corr = returns.corr()
-            fig_corr = go.Figure(go极.Heatmap(
+            fig_corr = go.Figure(go.Heatmap(
                 z=corr.values,
-                x=cor极.columns,
+                x=corr.columns,
                 y=corr.index,
                 colorscale='RdYlGn',
                 zmin=-1,
