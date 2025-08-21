@@ -62,32 +62,35 @@ INDIAN_INDICES = {
     "Nifty 50": "^NSEI",
     "Sensex": "^BSESN", 
     "Bank Nifty": "^NSEBANK",
-    "FinNifty": "NIFTY_FIN_SERVICE.NS",  # Alternative symbol
+    "FinNifty": "NIFTY_FIN_SERVICE.NS",
     "Nifty 100": "^CNX100"
 }
 
 # ------------------ MODULES ------------------
-# Module 1: Data Fetching - UPDATED for better accuracy
-@st.cache_data(ttl=300, show_spinner=False, max_entries=50)  # Reduced TTL for more frequent updates
+# Module 1: Data Fetching - IMPROVED for better accuracy
+@st.cache_data(ttl=180, show_spinner=False, max_entries=50)  # Reduced TTL for more frequent updates
 def get_stock_data(ticker, start, end):
     """Fetch stock data from Yahoo Finance with robust error handling"""
     try:
         logger.info(f"Fetching data for {ticker} from {start} to {end}")
         
         # For Indian stocks, ensure we're using the correct symbol format
-        if ticker.endswith('.NS') and not ticker.startswith('^'):
-            # Try multiple data sources for better accuracy
-            data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
-                              progress=False, auto_adjust=True)
-            
-            if data.empty or len(data) < 10:
-                # Try without NS suffix for some stocks
+        data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
+                          progress=False, auto_adjust=True)
+        
+        if data.empty or len(data) < 10:
+            # Try alternative data sources for Indian stocks
+            if ticker.endswith('.NS'):
+                # Try without NS suffix
                 alt_ticker = ticker.replace('.NS', '.BO')  # BSE
                 data = yf.download(alt_ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
                                   progress=False, auto_adjust=True)
-        else:
-            data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
-                              progress=False, auto_adjust=True)
+            
+            if data.empty:
+                # Try with just the symbol
+                base_ticker = ticker.replace('.NS', '').replace('.BO', '')
+                data = yf.download(base_ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
+                                  progress=False, auto_adjust=True)
         
         if data.empty:
             logger.warning(f"No data found for {ticker}, trying 1-year period")
@@ -142,10 +145,36 @@ def get_index_data(index_name, period="1mo"):
         logger.error(f"Error fetching index data: {str(e)}")
         return None, "Neutral"
 
+# Function to get market sentiment from Nifty 50
+@st.cache_data(ttl=300, show_spinner=False)
+def get_market_sentiment():
+    """Get market sentiment based on Nifty 50 performance"""
+    try:
+        nifty_data, sentiment = get_index_data("Nifty 50", "1mo")
+        if nifty_data is None:
+            return 65, "Neutral"  # Default to neutral
+        
+        # Calculate a sentiment score (0-100)
+        current_price = nifty_data['Close'].iloc[-1]
+        prev_price = nifty_data['Close'].iloc[0]
+        price_change = ((current_price - prev_price) / prev_price) * 100
+        
+        # Convert to a 0-100 scale
+        if price_change > 0:
+            sentiment_score = min(100, 50 + (price_change * 2))
+        else:
+            sentiment_score = max(0, 50 + (price_change * 2))
+            
+        return sentiment_score, sentiment
+        
+    except Exception as e:
+        logger.error(f"Error calculating market sentiment: {str(e)}")
+        return 65, "Neutral"  # Default to neutral
+
 # Module 2: Technical Analysis
 def calculate_technical_indicators(data):
     """Calculate various technical indicators for stock data"""
-    if 'Close' not in data.columns or len(data) < 50:  # Increased minimum data requirement
+    if 'Close' not in data.columns or len(data) < 50:
         return data
     
     close_series = data['Close'].squeeze()
@@ -279,7 +308,7 @@ def get_news(ticker):
         logger.error(f"News error: {e}")
         return []
 
-# Module 4: Forecasting - FIXED MERGE ISSUE
+# Module 4: Forecasting
 def prophet_forecast(data, forecast_days, country='IN'):
     """Perform time series forecasting using Prophet with holidays and technical indicators"""
     if len(data) < 90:
@@ -299,10 +328,10 @@ def prophet_forecast(data, forecast_days, country='IN'):
         daily_seasonality=False,
         yearly_seasonality=True,
         weekly_seasonality=True,
-        changepoint_prior_scale=0.001,  # Reduced to prevent overfitting
+        changepoint_prior_scale=0.001,
         seasonality_prior_scale=10,
         changepoint_range=0.8,
-        interval_width=0.95,  # Wider confidence interval
+        interval_width=0.95,
         uncertainty_samples=100,
         holidays=holiday_df
     )
@@ -379,7 +408,7 @@ def optimize_portfolio(returns, risk_tolerance):
         logger.error(f"Optimization failed: {str(e)}")
         return np.ones(n) / n
 
-# Module 6: Backtesting (FIXED)
+# Module 6: Backtesting
 def backtest_strategy(data, strategy, params):
     """Backtest a trading strategy with realistic simulation"""
     if len(data) < 100:
@@ -966,7 +995,7 @@ CUSTOM_CSS = """
         color: white !important;
         border-radius: 30px !important;
         font-weight: 600 !important;
-        padding: 10px 25px !important;
+        padding: 10极 25px !important;
         border: none !important;
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
         transition: all 0.3s ease;
@@ -983,7 +1012,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b极d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1043,7 +1072,7 @@ CUSTOM_CSS = """
     
     .negative {
         border-left: 6px solid var(--danger);
-        background: linear-gradient(135deg, rgba(244, 67, 54, 0.3), var(--vibrant-green));
+        background: linear-gradient(135极deg, rgba(244, 67, 54, 0.3), var(--vibrant-green));
     }
     
     .neutral {
@@ -1069,7 +1098,7 @@ CUSTOM_CSS = """
         padding: 25px;
         margin: 20px 0;
         border: 1px solid var(--card-border);
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 极.1);
         transition: all 0.4s ease;
         backdrop-filter: blur(10px);
         animation: cardAppear 0.8s ease-out;
@@ -1094,8 +1123,8 @@ CUSTOM_CSS = """
     }
     
     @keyframes cardAppear {
-        from { opacity: 0; transform: scale(0.95); }
-        to { opacity: 1; transform: scale(1); }
+        0% { opacity: 0; transform: scale(0.95); }
+        100% { opacity: 极; transform: scale(1); }
     }
     
     .feature-card:hover {
@@ -1159,9 +1188,9 @@ CUSTOM_CSS = """
         position: absolute;
         top: -2px;
         left: -2px;
-        right: -2
+        right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #极d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1171,14 +1200,14 @@ CUSTOM_CSS = """
     @keyframes pulse {
         0% { box-shadow: 0 0 0 0 rgba(0, 200, 83, 0.4); }
         70% { box-shadow: 0 0 0 15px rgba(0, 200, 83, 0); }
-        100% { box-shadow: 极 0 0 0 0 rgba(0, 200, 83, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(0, 200, 83, 0); }
     }
     
     .gauge-value {
         font-size: 2.5rem;
         font-weight: 800;
         color: var(--accent);
-        text-shadow: 0 极 10px rgba(0, 0, 0, 0.5);
+        text-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
         margin: 10px 0;
     }
     
@@ -1186,7 +1215,7 @@ CUSTOM_CSS = """
         background: rgba(19, 28, 58, 0.8) !important;
         backdrop-filter: blur(10px);
         border-radius: 15px;
-        padding: 10;
+        padding: 10px;
         margin-bottom: 30px;
         border: 1px solid var(--card-border);
         position: relative;
@@ -1201,7 +1230,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #939b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1228,7 +1257,7 @@ CUSTOM_CSS = """
     }
     
     .ai-response {
-        background: linear-gradient(135deg, var(--vibrant-teal), var(--vibrant-cyan));
+        background: linear-gradient(135deg, var(--vibrant-teal极), var(--vibrant-cyan));
         padding: 25px;
         border-radius: 15px;
         margin-top: 20px;
@@ -1250,7 +1279,7 @@ CUSTOM_CSS = """
         right: -2px;
         bottom: -2px;
         background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
-极        z-index: -1;
+        z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
         background-size: 400% 400%;
@@ -1278,7 +1307,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052极4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1294,7 +1323,7 @@ CUSTOM_CSS = """
     .strategy-card h4 {
         color: var(--accent);
         font-size: 1.5rem;
-        margin-bottom: 15px;
+        margin-bottom: 15极;
     }
     
     .macro-metric {
@@ -1342,13 +1371,13 @@ CUSTOM_CSS = """
     .options-payoff {
         background: linear-gradient(135deg, var(--vibrant-teal), var(--vibrant-orange));
         border-radius: 15px;
-        padding: 25px;
+        padding极: 25px;
         margin: 20px 0;
-        border: 1px solid var(--card-border);
+        border: 1px solid var(--极ard-border);
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-        backdrop-filter: blur(0px);
+        backdrop-filter: blur(10px);
         position: relative;
-         overflow: hidden;
+        overflow: hidden;
         z-index: 1;
     }
     
@@ -1383,7 +1412,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976极c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1427,32 +1456,22 @@ def main():
     # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")
     
-    # Add Indian indices selection
-    st.sidebar.subheader("📊 Indian Market Indices")
-    selected_index = st.sidebar.selectbox("Select Index", list(INDIAN_INDICES.keys()))
+    # Get market sentiment from Nifty 50
+    sentiment_score, sentiment = get_market_sentiment()
     
-    # Fetch and display index data
-    index_data, index_sentiment = get_index_data(selected_index)
-    if index_data is not None and not index_data.empty:
-        current_price = index_data['Close'].iloc[-1]
-        prev_close = index_data['Close'].iloc[-2] if len(index_data) > 1 else current_price
-        change = ((current_price - prev_close) / prev_close) * 100
-        
-        st.sidebar.markdown(f"""
-            <div class="metric-card">
-                <b>{selected_index}</b><br>
-                Price: {current_price:.2f}<br>
-                Change: {change:.2f}%<br>
-                Sentiment: <b>{index_sentiment}</b>
-            </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.sidebar.warning("Could not fetch index data")
+    # Market sentiment gauge
+    st.sidebar.markdown("### 📈 Market Sentiment")
+    st.sidebar.markdown(f"""
+        <div class="gauge">
+            <div class="gauge-value">{int(sentiment_score)}/100</div>
+            <small>{sentiment} Market</small>
+        </div>
+    """, unsafe_allow_html=True)
     
     default_tickers = [
         "NTPC.NS", "VMM.NS", "SAGILITY.NS", "TATAMOTORS.NS",
         "TCS.NS", "SBIN.NS", "KALYANKJIL.NS", "SWANENERGY.NS", "PRAJIND.NS",
-        "RELIANCE.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", "HINDUNILVR.NS",
+        "RELIANCE.NS", "HDFCBANK.NS", "INFY.极", "ICICIBANK.NS", "HINDUNILVR.NS",
         "BAJFINANCE.NS", "LT.NS", "AXISBANK.NS", "ADANIENT.NS", "BHARTIARTL.NS",
         "HCLTECH.NS", "KOTAKBANK.NS", "ITC.NS", "ASIANPAINT.NS", "MARUTI.NS",
         "TITAN.NS", "SUNPHARMA.NS"
@@ -1465,16 +1484,6 @@ def main():
     risk_tolerance = st.sidebar.slider("⚠️ Risk Tolerance (1=Low, 10=High)", 1, 10, 5)
     portfolio_size = st.sidebar.number_input("💰 Portfolio Size ($)", 10000, 1000000, 50000)
     portfolio_tickers = st.sidebar.multiselect("📊 Select Portfolio Stocks", default_tickers, default=default_tickers[:5])
-    
-    # Market sentiment gauge
-    st.sidebar.markdown("### 📈 Market Sentiment")
-    sentiment_value = st.sidebar.slider("Bull/Bear Indicator", 0, 100, 65)
-    st.sidebar.markdown(f"""
-        <div class="gauge">
-            <div class="gauge-value">{sentiment_value}/100</div>
-            <small>{'Bullish' if sentiment_value > 60 else 'Bearish' if sentiment_value < 40 else 'Neutral'} Market</small>
-        </div>
-    """, unsafe_allow_html=True)
     
     # Alert system
     st.sidebar.markdown("### 🔔 Custom Alerts")
@@ -1500,7 +1509,6 @@ def main():
     # Advanced options
     st.sidebar.markdown("### ⚙️ Advanced Options")
     tune_hyperparams = st.sidebar.checkbox("Tune Hyperparameters", value=False)
-    enable_hybrid = st.sidebar.checkbox("Enable Hybrid Forecasting", value=True)
 
     # Fetch stock data
     with st.spinner('Fetching market data...'):
@@ -1514,15 +1522,51 @@ def main():
     # Calculate technical indicators
     data = calculate_technical_indicators(data)
 
-    # Create tabs - added new tab for indices
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    # Create tabs
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "🏠 Home", "📈 Market Data", "🔮 Forecasting", "📰 Sentiment", 
-        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time", "📊 Indices"
+        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time"
     ])
 
-    # Home Tab
+    # Home Tab - UPDATED with Indian indices
     with tab1:
         st.markdown('<div class="subheader">🚀 Welcome to Quantum Stock Analytics</div>', unsafe_allow_html=True)
+        
+        # Display Indian Market Indices
+        st.markdown('<div class="subheader">📊 Indian Market Indices</div>', unsafe_allow_html=True)
+        
+        # Create columns for index cards
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        # Fetch and display data for each index
+        indices_data = {}
+        for i, (index_name, index_symbol) in enumerate(INDIAN_INDICES.items()):
+            with [col1, col2, col3, col4, col5][i % 5]:
+                index_data, sentiment = get_index_data(index_name, "1d")
+                
+                if index_data is not None and not index_data.empty:
+                    current_price = index_data['Close'].iloc[-1]
+                    prev_close = index_data['Close'].iloc[-2] if len(index_data) > 1 else current_price
+                    change = ((current_price - prev_close) / prev_close) * 100
+                    
+                    # Determine color based on change
+                    color = "green" if change >= 0 else "red"
+                    
+                    st.markdown(f"""
+                        <div class="metric-card">
+                            <h4>{index_name}</h4>
+                            <p style="font-size: 1.2rem; color: {color};"><b>{current_price:.2f}</b></p>
+                            <p>Change: <span style="color: {color};">{change:.2f}%</span></p>
+                            <p>Sentiment: <b>{sentiment}</b></p>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    indices_data[index_name] = {
+                        'price': current_price,
+                        'change': change,
+                        'sentiment': sentiment
+                    }
+                else:
+                    st.warning(f"Could not fetch data for {index_name}")
         
         # Project Introduction
         st.markdown("""
@@ -1543,7 +1587,7 @@ def main():
                 <h4>📈 Real-Time Market Intelligence</h4>
                 <ul>
                     <li>Live price tracking with candlestick charts</li>
-                    <li>Technical indicators (RSI, MAC, Moving Averages)</li>
+                    <li>Technical indicators (RSI, MACD, Moving Averages)</li>
                     <li>Options analysis & payoff visualization</li>
                     <li>Institutional activity tracking</li>
                 </ul>
@@ -1556,7 +1600,7 @@ def main():
                 <h4>🔮 Hybrid Forecasting</h4>
                 <ul>
                     <li>Prophet time-series forecasting</li>
-                    <li>Lightweight trend + volatility model</li>
+                    <li>Lightweight trend + volatility model</极i>
                     <li>Confidence interval projections</li>
                     <li>Risk assessment metrics</li>
                 </ul>
@@ -1616,7 +1660,7 @@ def main():
                     <li>CVXPY Optimization</li>
                 </ul>
                 <p><strong>Real-Time Data</strong></p>
-                <ul style="text-align:left;">
+                <ul style极="text-align:left;">
                     <li>Yahoo Finance API</li>
                     <li>NewsAPI Integration</li>
                     <li>Streamlit Live Updates</li>
@@ -1627,7 +1671,7 @@ def main():
         # Usage Instructions
         st.markdown('<div class="subheader">🚦 Getting Started</div>', unsafe_allow_html=True)
         st.markdown("""
-        <iv class="feature-card">
+        <div class="feature-card">
             <ol style="font-size:1.1em;">
                 <li><b style="color:#00c853;">Select a stock</b> from the sidebar dropdown</li>
                 <li><b style="color:#00c853;">Adjust date ranges</b> and forecast periods</li>
@@ -1677,7 +1721,7 @@ def main():
                 if len(data) > 50:
                     data['MA50'] = data['Close'].rolling(window=50).mean()
                     fig.add_trace(go.Scatter(
-                        x=data.index, y=data['MA50'],
+                        x=data.index, y=data['极A50'],
                         mode='lines', name='50-day MA',
                         line=dict(color='purple', width=2)
                     ))
@@ -1701,7 +1745,7 @@ def main():
                 fig_tech.add_trace(go.Scatter(
                     x=data.index, y=data['Close'],
                     mode='lines', name='Close',
-                    line=dict(color='#4F8BF9')
+                    line极=dict(color='#4F8BF9')
                 ))
                 
                 if 'MACD' in data.columns:
@@ -1803,12 +1847,8 @@ def main():
 
     # Forecasting Tab
     with tab3:
-        st.markdown('<div class="subheader">Hybrid Prophet-TFT Forecasting</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subheader">Hybrid Prophet Forecasting</div>', unsafe_allow_html=True)
         
-        # Initialize variables to track forecasting success
-        prophet_success = False
-        tft_success = False
-
         if data.empty:
             st.error("No data available for forecasting. Please select a different ticker or date range.")
         else:
@@ -1826,7 +1866,7 @@ def main():
                         xaxis_title="Date",
                         yaxis_title="Price"
                     )
-                    st.plotly_chart(fig1, use_container_width=True)
+                    st.plotly极art(fig1, use_container_width=True)
                     
                     st.subheader("Forecast Components")
                     fig2 = plot_components_plotly(prophet_model, prophet_forecast_df)
@@ -1847,7 +1887,6 @@ def main():
                     ))
                     rt_monitor.monitor_performance("Prophet", prophet_rmse)
 
-                    prophet_success = True
             except Exception as e:
                 st.error(f"Prophet forecasting error: {str(e)}")
             
@@ -1926,7 +1965,7 @@ def main():
                 try:
                     sentiments.extend(sentiment_model(batch))
                 except Exception as e:
-                    logger.error(f"Sentiment error: {str(e)}")
+                    logger.error(f极"Sentiment error: {str(e)}")
                     # Add neutral sentiment as fallback
                     sentiments.extend([{'label': 'NEUTRAL', 'score': 0.5}] * len(batch))
             
@@ -1949,14 +1988,14 @@ def main():
                 <div class="news-item {style}">
                     <b>{news['title']}</b><br>
                     <i>{news.get('date', '')[:10]}</i><br>
-                    <i>Sentiment:</i> {label.capitalize()} ({score:.2f})极<br>
+                    <i>Sentiment:</i> {label.capitalize()} ({score:.2f})<br>
                     <a href="{news['link']}" target="_blank">Read more</a>
                 </div>
                 """, unsafe_allow_html=True)
                 
             # Overall sentiment gauge
             positive_count = sum(1 for s in sentiments if s['label'] == 'POSITIVE')
-            sentiment_score = positive_count / len(sentiments) if sentiments else 0.5
+            sentiment_score = positive_count / len(sentiments极) if sentiments else 0.5
             
             st.subheader("Overall Sentiment")
             col1, col2, col3 = st.columns(3)
@@ -1980,7 +2019,7 @@ def main():
                 
                 if not earnings_data.empty:
                     fig_earn = go.Figure()
-                    fig_earn.add极race(go.Bar(
+                    fig_earn.add_trace(go.Bar(
                         x=earnings_data.index,
                         y=earnings_data['Surprise (%)'],
                         name='Earnings Surprise',
@@ -1994,7 +2033,7 @@ def main():
                     )
                     st.plotly_chart(fig_earn, use_container_width=True)
                     
-                    last_earnings = earnings_data.iloc极[-1]
+                    last_earnings = earnings_data.iloc[-1]
                     col_earn1, col_earn2, col_earn3 = st.columns(3)
                     col_earn1.metric("Reported EPS", f"{last_earnings['Reported EPS']:.2f}")
                     col_earn2.metric("Estimate", f"{last_earnings['EPS Estimate']:.2f}")
@@ -2054,7 +2093,7 @@ def main():
 
             if weights is None:
                 st.warning("Optimization failed. Using equal weights")
-                weights = np.ones(len(portfolio_data.columns)) / len极(portfolio_data.columns)
+                weights = np.ones(len(portfolio_data.columns)) / len(portfolio_data.columns)
 
             # Calculate annualized returns
             expected_returns = {}
@@ -2069,7 +2108,7 @@ def main():
                 actual_returns[t] = calculate_annual_return(stock_data, start_date, end_date) * 100
 
             st.subheader("Optimized Portfolio Allocation")
-
+            
             # Create allocation dataframe
             allocation_df = pd.DataFrame({
                 'Stock': portfolio_data.columns,
@@ -2121,7 +2160,7 @@ def main():
                 lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
             )
             return_df['Actual Return'] = return_df['Actual Return'].apply(
-                lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
+                lambda x:极"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
             )
             
             st.dataframe(return_df)
@@ -2134,7 +2173,7 @@ def main():
                 x=corr.columns,
                 y=corr.index,
                 colorscale='RdYlGn',
-                zmin=-1,
+                z极in=-1,
                 zmax=1,
                 text=np.round(corr.values, 2),
                 texttemplate="%{text}"
@@ -2142,7 +2181,7 @@ def main():
             fig_corr.update_layout(
                 height=600,
                 title="Stock Correlation Heatmap",
-                template='plotly_dark'
+                template='plotly极ark'
             )
             st.plotly_chart(fig_corr, use_container_width=True)
             
@@ -2165,7 +2204,7 @@ def main():
                     <h3>{macro_data['interest_rate']}%</h3>
                     <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
-                </div>
+                </极iv>
             """, unsafe_allow_html=True)
             col_m3.markdown(f"""
                 <div class="macro-metric">
@@ -2179,21 +2218,21 @@ def main():
                 <div class="macro-metric">
                     <h5>GDP Growth</h5>
                     <h3>{macro_data['gdp_growth']}%</h3>
-                    <small>Source: {macro_data['source']}</small>
+                    <small极Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
             """, unsafe_allow_html=True)
             col_m5.markdown(f"""
                 <div class="macro-metric">
                     <h5>Consumer Sentiment</h5>
-                    <h3>{macro_data['consumer_sentiment']}</3>
+                    <h3>{macro_data['consumer_sentiment']}</h3>
                     <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
             """, unsafe_allow_html=True)
             col_m6.markdown(f"""
                 <div class="macro-metric">
-                    <h5>Manufacturing PMI</h5>
+                    <极5>Manufacturing PMI</h5>
                     <h3>{macro_data['manufacturing_pmi']}</h3>
                     <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
@@ -2267,7 +2306,7 @@ def main():
                 <li><b>Asset Allocation:</b> {np.random.randint(60,80)}% equities, {np.random.randint(20,30)}% bonds, {np.random.randint(5,15)}% alternatives</li>
                 <li><b>Sector Focus:</b> Technology ({np.random.randint(30,40)}%), Healthcare ({np.random.randint(15,25)}%), Financials ({np.random.randint(10,20)}%)</li>
                 <li><b>Position Sizing:</b> Limit single positions to {np.random.randint(5,10)}% of portfolio</li>
-                <i><b>Rebalancing:</b> Quarterly rebalancing recommended</li>
+                <li><b>Rebalancing:</b> Quarterly rebalancing recommended</li>
                 <li><b>Tax Optimization:</b> {'Tax-loss harvesting' if np.random.random() > 0.5 else 'Long-term holding strategy'}</li>
             </ul>
         </div>
@@ -2284,7 +2323,7 @@ def main():
                 <li><b>Recommended Strategy:</b> {'Growth focus' if sentiment_value > 60 else 'Defensive positioning' if sentiment_value < 40 else 'Balanced approach'}</li>
                 <li><b>Key Opportunity:</b> {'Technology sector' if np.random.random() > 0.5 else 'Emerging markets'}</li>
                 <li><b>Key Risk:</b> {'Interest rate hikes' if np.random.random() > 0.5 else 'Geopolitical tensions'}</li>
-                <li><b>Portfolio Action:</b> {'Rebalance towards value stocks' if np.random.random() > 0.5 else 'Increase cash position'}</li>
+                <li><b极Portfolio Action:</b> {'Rebalance towards value stocks' if np.random.random() > 0.5 else 'Increase cash position'}</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -2331,7 +2370,7 @@ def main():
                 
             # Display results
             st.subheader("Backtest Results")
-            col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+            col_res1, col_res2, col_res3, col极es4 = st.columns(4)
             col_res1.metric("Total Return", f"{results['return']:.2f}%")
             col_res2.metric("Max Drawdown", f"{results['drawdown']:.2f}%")
             col_res3.metric("Sharpe Ratio", f"{results['sharpe']:.2f}")
@@ -2350,7 +2389,7 @@ def main():
             ))
             
             if 'portfolio' in results and len(results['portfolio']) > 0:
-                fig_backtest.add_trace(go.Scatter(
+                fig_backtest.add_trace极(go.Scatter(
                     x=data.index[params.get('long_window', 50):][:len(results['portfolio'])],
                     y=results['portfolio'],
                     mode='lines',
@@ -2363,12 +2402,12 @@ def main():
             if 'trades' in results:
                 buy_dates = [t[1] for t in results['trades'] if t[0] == 'buy']
                 buy_prices = [t[2] for t in results['trades'] if t[0] == 'buy']
-                sell_dates = [t[1] for t in results['trades'] if t[0] == 'sell']
+                sell_dates = [t[极] for t in results['trades'] if t[0] == 'sell']
                 sell_prices = [t[2] for t in results['trades'] if t[0] == 'sell']
                 
                 if buy_dates:
                     fig_backtest.add_trace(go.Scatter(
-                        x=buy_dates,
+                        x=b极y_dates,
                         y=buy_prices,
                         mode='markers',
                         name='Buy',
@@ -2406,14 +2445,13 @@ def main():
                 trades_df = pd.DataFrame(results['trades'], columns=['Action', 'Date', 'Price', 'Shares'])
                 st.dataframe(trades_df)
 
-    # Real-Time Monitoring Tab - FIXED rerun issue
+    # Real-Time Monitoring Tab
     with tab8:
         st.markdown('<div class="header">🚀 Real-Time Dashboard</div>', unsafe_allow_html=True)
         st.markdown('<div class="subheader">Live market monitoring and predictions</div>', unsafe_allow_html=True)
         
         # Real-time data fetching
         if st.button("Refresh Real-Time Data"):
-            # Use st.rerun() instead of st.experimental_rerun()
             st.rerun()
         
         col_rt1, col_rt2, col_rt3 = st.columns(3)
@@ -2466,122 +2504,6 @@ def main():
         else:
             next_retrain = rt_monitor.last_retrain + timedelta(days=7)
             st.info(f"Models up to date. Next retraining scheduled for {next_retrain.strftime('%Y-%m-%d')}")
-
-    # New Indices Tab
-    with tab9:
-        st.markdown('<div class="header">📊 Indian Market Indices</div>', unsafe_allow_html=True)
-        st.markdown('<div class="subheader">Real-time performance of major Indian indices</div>', unsafe_allow_html=True)
-        
-        # Display all major indices
-        st.subheader("Major Indian Indices")
-        
-        # Create columns for index cards
-        col1, col2, col3 = st.columns(3)
-        
-        # Fetch and display data for each index
-        for i, (index_name, index_symbol) in enumerate(INDIAN_INDICES.items()):
-            with [col1, col2, col3][i % 3]:
-                index_data, sentiment = get_index_data(index_name, "1mo")
-                
-                if index_data is not None and not index_data.empty:
-                    current_price = index_data['Close'].iloc[-1]
-                    prev_close = index_data['Close'].iloc[-2] if len(index_data) > 1 else current_price
-                    change = ((current_price - prev_close) / prev_close) * 100
-                    
-                    # Determine color based on change
-                    color = "green" if change >= 0 else "red"
-                    
-                    st.markdown(f"""
-                        <div class="metric-card">
-                            <h3>{index_name}</h3>
-                            <p style="font-size: 1.5rem; color: {color};"><b>{current_price:.2f}</b></p>
-                            <p>Change: <span style="color: {color};">{change:.2f}%</span></p>
-                            <p>Sentiment: <b>{sentiment}</b></p>
-                        </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.warning(f"Could not fetch data for {index_name}")
-        
-        # Display historical chart for selected index
-        st.subheader(f"{selected_index} Historical Performance")
-        selected_index_data, _ = get_index_data(selected_index, "6mo")
-        
-        if selected_index_data is not None and not selected_index_data.empty:
-            fig_index = go.Figure()
-            fig_index.add_trace(go.Candlestick(
-                x=selected_index_data.index,
-                open=selected_index_data['Open'],
-                high=selected_index_data['High'],
-                low=selected_index_data['Low'],
-                close=selected_index_data['Close'],
-                name=selected_index
-            ))
-            
-            fig_index.update_layout(
-                title=f'{selected_index} Price Movement',
-                xaxis_title='Date',
-                yaxis_title='Price',
-                template='plotly_dark',
-                height=500
-            )
-            st.plotly_chart(fig_index, use_container_width=True)
-            
-            # Add technical analysis for the index
-            st.subheader("Technical Analysis")
-            selected_index_data = calculate_technical_indicators(selected_index_data)
-            
-            if 'RSI' in selected_index_data.columns:
-                fig_rsi = go.Figure()
-                fig_rsi.add_trace(go.Scatter(
-                    x=selected_index_data.index,
-                    y=selected_index_data['RSI'],
-                    mode='lines',
-                    name='RSI'
-                ))
-                
-                # Add overbought/oversold lines
-                fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
-                fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
-                
-                fig_rsi.update_layout(
-                    title='RSI Indicator',
-                    xaxis_title='Date',
-                    yaxis_title='RSI',
-                    template='plotly_dark',
-                    height=300
-                )
-                st.plotly_chart(fig_rsi, use_container_width=True)
-            
-            # Market commentary
-            st.subheader("Market Commentary")
-            
-            # Simple commentary based on index performance
-            if selected_index_data['Close'].iloc[-1] > selected_index_data['Close'].iloc[0]:
-                commentary = f"The {selected_index} has shown positive performance over the selected period, indicating overall market strength. This bullish trend suggests investor confidence in the underlying components of the index."
-            else:
-                commentary = f"The {selected_index} has experienced a decline over the selected period, reflecting market uncertainty or negative sentiment. Investors should monitor key support levels for potential reversal signals."
-            
-            st.info(commentary)
-            
-            # Sector performance (simulated)
-            st.subheader("Sector Performance")
-            sectors = ["Banking", "IT", "Pharma", "Auto", "FMCG", "Energy"]
-            performance = np.random.uniform(-5, 5, len(sectors))
-            
-            fig_sector = go.Figure(go.Bar(
-                x=sectors,
-                y=performance,
-                marker_color=np.where(performance >= 0, 'green', 'red')
-            ))
-            fig_sector.update_layout(
-                title='Sector Performance (Simulated)',
-                xaxis_title='Sector',
-                yaxis_title='Performance (%)',
-                template='plotly_dark'
-            )
-            st.plotly_chart(fig_sector, use_container_width=True)
-        else:
-            st.warning(f"Could not fetch historical data for {selected_index}")
 
 if __name__ == "__main__":
     main()
