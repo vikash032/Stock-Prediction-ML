@@ -1866,7 +1866,7 @@ def main():
                         xaxis_title="Date",
                         yaxis_title="Price"
                     )
-                    st.plotly极art(fig1, use_container_width=True)
+                    st.plotly_chart(fig1, use_container_width=True)
                     
                     st.subheader("Forecast Components")
                     fig2 = plot_components_plotly(prophet_model, prophet_forecast_df)
