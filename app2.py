@@ -1965,7 +1965,7 @@ def main():
                 try:
                     sentiments.extend(sentiment_model(batch))
                 except Exception as e:
-                    logger.error(f极"Sentiment error: {str(e)}")
+                    logger.error(f"Sentiment error: {str(e)}")
                     # Add neutral sentiment as fallback
                     sentiments.extend([{'label': 'NEUTRAL', 'score': 0.5}] * len(batch))
             
