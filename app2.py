@@ -1159,7 +1159,7 @@ CUSTOM_CSS = """
         position: absolute;
         top: -2px;
         left: -2px;
-        right: -2极
+        right: -2
         bottom: -2px;
         background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
@@ -1186,7 +1186,7 @@ CUSTOM_CSS = """
         background: rgba(19, 28, 58, 0.8) !important;
         backdrop-filter: blur(10px);
         border-radius: 15px;
-        padding: 10极;
+        padding: 10;
         margin-bottom: 30px;
         border: 1px solid var(--card-border);
         position: relative;
@@ -1201,7 +1201,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93极9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #939b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1216,7 +1216,7 @@ CUSTOM_CSS = """
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
     }
     
-    .stTabs [role极="tab"] {
+    .stTabs [role="tab"] {
         color: var(--light) !important;
         padding: 10px 20px !important;
         border-radius: 12px !important;
@@ -1252,7 +1252,7 @@ CUSTOM_CSS = """
         background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
 极        z-index: -1;
         filter: blur(5px);
-        animation: glowing 3极s ease-in-out infinite alternate;
+        animation: glowing 3s ease-in-out infinite alternate;
         background-size: 400% 400%;
     }
     
@@ -1346,9 +1346,9 @@ CUSTOM_CSS = """
         margin: 20px 0;
         border: 1px solid var(--card-border);
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-        backdrop-filter: blur(极0px);
+        backdrop-filter: blur(0px);
         position: relative;
-极        overflow: hidden;
+         overflow: hidden;
         z-index: 1;
     }
     
@@ -1543,7 +1543,7 @@ def main():
                 <h4>📈 Real-Time Market Intelligence</h4>
                 <ul>
                     <li>Live price tracking with candlestick charts</li>
-                    <li>Technical indicators (RSI, MAC极, Moving Averages)</li>
+                    <li>Technical indicators (RSI, MAC, Moving Averages)</li>
                     <li>Options analysis & payoff visualization</li>
                     <li>Institutional activity tracking</li>
                 </ul>
@@ -1557,7 +1557,7 @@ def main():
                 <ul>
                     <li>Prophet time-series forecasting</li>
                     <li>Lightweight trend + volatility model</li>
-                    <li>Confidence interval projections</极>
+                    <li>Confidence interval projections</li>
                     <li>Risk assessment metrics</li>
                 </ul>
             </div>
@@ -1581,7 +1581,7 @@ def main():
         col4, col5 = st.columns([2, 1])
         with col4:
             st.markdown("""
-            <div class极="feature-card">
+            <div class="feature-card">
                 <h4>🧠 Sentiment-Driven Analysis</h4>
                 <p>Our proprietary sentiment engine combines:</p>
                 <ul>
@@ -1627,13 +1627,13 @@ def main():
         # Usage Instructions
         st.markdown('<div class="subheader">🚦 Getting Started</div>', unsafe_allow_html=True)
         st.markdown("""
-        <极iv class="feature-card">
+        <iv class="feature-card">
             <ol style="font-size:1.1em;">
                 <li><b style="color:#00c853;">Select a stock</b> from the sidebar dropdown</li>
                 <li><b style="color:#00c853;">Adjust date ranges</b> and forecast periods</li>
                 <li><b style="color:#00c853;">Explore different tabs</b> for various analyses</li>
                 <li><b style="color:#00c853;">Build portfolios</b> with multiple stocks</li>
-                <li><b style极="color:#00c853;">Ask questions</b> to the AI Assistant</极i>
+                <li><b style="color:#00c853;">Ask questions</b> to the AI Assistant</li>
                 <li><b style="color:#00c853;">Test strategies</b> with historical data</li>
             </ol>
             <div style="text-align:center; margin-top:20px; padding:10px; background:rgba(0,200,83,0.1); border-radius:10px;">
@@ -1719,7 +1719,7 @@ def main():
                     ))
                 
                 # RSI on secondary axis
-                if 'RSI极' in data.columns:
+                if 'RSI' in data.columns:
                     fig_tech.add_trace(go.Scatter(
                         x=data.index, y=data['RSI'],
                         mode='lines', name='RSI',
