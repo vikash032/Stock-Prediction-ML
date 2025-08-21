@@ -1995,7 +1995,7 @@ def main():
                 
             # Overall sentiment gauge
             positive_count = sum(1 for s in sentiments if s['label'] == 'POSITIVE')
-            sentiment_score = positive_count / len(sentiments) if sentiments else 0.5
+            sentiment_score = positive_count / len(sentiment) if sentiments else 0.5
             
             st.subheader("Overall Sentiment")
             col1, col2, col3 = st.columns(3)
