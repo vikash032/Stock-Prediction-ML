@@ -62,27 +62,36 @@ INDIAN_INDICES = {
     "Nifty 50": "^NSEI",
     "Sensex": "^BSESN", 
     "Bank Nifty": "^NSEBANK",
-    "FinNifty": "NIFTY_FIN_SERVICE.NS",
+    "FinNifty": "NIFTY_FIN_SERVICE.NS",  # Alternative symbol
     "Nifty 100": "^CNX100"
 }
 
 # ------------------ MODULES ------------------
-# Module 1: Data Fetching with improved accuracy
-@st.cache_data(ttl=300, show_spinner=False, max_entries=50)
+# Module 1: Data Fetching - UPDATED for better accuracy
+@st.cache_data(ttl=300, show_spinner=False, max_entries=50)  # Reduced TTL for more frequent updates
 def get_stock_data(ticker, start, end):
     """Fetch stock data from Yahoo Finance with robust error handling"""
     try:
         logger.info(f"Fetching data for {ticker} from {start} to {end}")
         
-        # For Indian stocks, ensure we have the .NS suffix if not present
-        if not any(ticker.endswith(suffix) for suffix in ['.NS', '.BO']) and not ticker.startswith('^'):
-            ticker += '.NS'
+        # For Indian stocks, ensure we're using the correct symbol format
+        if ticker.endswith('.NS') and not ticker.startswith('^'):
+            # Try multiple data sources for better accuracy
+            data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
+                              progress=False, auto_adjust=True)
             
-        data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1))
+            if data.empty or len(data) < 10:
+                # Try without NS suffix for some stocks
+                alt_ticker = ticker.replace('.NS', '.BO')  # BSE
+                data = yf.download(alt_ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
+                                  progress=False, auto_adjust=True)
+        else:
+            data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
+                              progress=False, auto_adjust=True)
         
         if data.empty:
             logger.warning(f"No data found for {ticker}, trying 1-year period")
-            data = yf.download(ticker, period="1y")
+            data = yf.download(ticker, period="1y", auto_adjust=True)
             if data.empty:
                 raise ValueError(f"No data available for {ticker}")
         
@@ -98,58 +107,40 @@ def get_stock_data(ticker, start, end):
         st.error(f"Data fetch error: {str(e)}. Please try a different ticker or date range.")
         return pd.DataFrame()
 
+# New function to get index data and market sentiment
 @st.cache_data(ttl=300, show_spinner=False)
-def get_index_data(index_name):
-    """Fetch data for Indian market indices"""
+def get_index_data(index_name, period="1mo"):
+    """Fetch index data and determine market sentiment"""
     try:
         symbol = INDIAN_INDICES.get(index_name)
         if not symbol:
-            return None
+            return None, "Neutral"
             
-        data = yf.download(symbol, period="2mo")
-        if data.empty:
-            return None
-            
-        return data
-    except Exception as e:
-        logger.error(f"Error fetching index data for {index_name}: {str(e)}")
-        return None
-
-def get_market_sentiment():
-    """Determine if market is bullish or bearish based on multiple indices"""
-    bullish_count = 0
-    total_count = 0
-    sentiment_details = {}
-    
-    for index_name, symbol in INDIAN_INDICES.items():
-        data = get_index_data(index_name)
-        if data is not None and not data.empty and 'Close' in data.columns:
-            # Calculate short-term (20-day) and medium-term (50-day) moving averages
-            if len(data) >= 50:
-                ma_20 = data['Close'].rolling(window=20).mean().iloc[-1]
-                ma_50 = data['Close'].rolling(window=50).mean().iloc[-1]
-                current_price = data['Close'].iloc[-1]
-                
-                # Determine trend (bullish if above both MAs)
-                is_bullish = current_price > ma_20 and current_price > ma_50
-                sentiment_details[index_name] = {
-                    'current': current_price,
-                    'ma_20': ma_20,
-                    'ma_50': ma_50,
-                    'trend': 'Bullish' if is_bullish else 'Bearish'
-                }
-                
-                if is_bullish:
-                    bullish_count += 1
-                total_count += 1
-    
-    # Overall market sentiment (bullish if majority of indices are bullish)
-    if total_count > 0:
-        market_sentiment = 'Bullish' if (bullish_count / total_count) >= 0.6 else 'Bearish'
-    else:
-        market_sentiment = 'Neutral'
+        # Get index data
+        index_data = yf.Ticker(symbol)
+        hist = index_data.history(period=period)
         
-    return market_sentiment, sentiment_details
+        if hist.empty:
+            return None, "Neutral"
+            
+        # Calculate simple trend (bullish/bearish)
+        current_price = hist['Close'].iloc[-1]
+        prev_price = hist['Close'].iloc[0] if len(hist) > 1 else current_price
+        
+        # Determine sentiment
+        price_change = ((current_price - prev_price) / prev_price) * 100
+        if price_change > 2:
+            sentiment = "Bullish"
+        elif price_change < -2:
+            sentiment = "Bearish"
+        else:
+            sentiment = "Neutral"
+            
+        return hist, sentiment
+        
+    except Exception as e:
+        logger.error(f"Error fetching index data: {str(e)}")
+        return None, "Neutral"
 
 # Module 2: Technical Analysis
 def calculate_technical_indicators(data):
@@ -234,39 +225,36 @@ def get_news(ticker):
         st.error("News API key not configured. News features disabled.")
         return []
     
-    # Remove .NS suffix for news search
-    clean_ticker = ticker.replace('.NS', '')
-    
     company_map = {
-        "NTPC": "NTPC",
-        "VISHWARAJ": "Vishal Mega Mart",  # Updated ticker for Vishal Mega Mart
-        "SAGILITY": "Sagility India",
-        "TATAMOTORS": "Tata Motors",
-        "TCS": "TCS",
-        "SBIN": "SBI",
-        "KALYANKJIL": "Kalyan Jewellers",
-        "SWANENERGY": "Swan Energy",
-        "PRAJIND": "Praj Industries",
-        "RELIANCE": "Reliance Industries",
-        "HDFCBANK": "HDFC Bank",
-        "INFY": "Infosys",
-        "ICICIBANK": "ICICI Bank",
-        "HINDUNILVR": "Hindustan Unilever",
-        "BAJFINANCE": "Bajaj Finance",
-        "LT": "Larsen & Toubro",
-        "AXISBANK": "Axis Bank",
-        "ADANIENT": "Adani Enterprises",
-        "BHARTIARTL": "Bharti Airtel",
-        "HCLTECH": "HCL Technologies",
-        "KOTAKBANK": "Kotak Mahindra Bank",
-        "ITC": "ITC",
-        "ASIANPAINT": "Asian Paints",
-        "MARUTI": "Maruti Suzuki",
-        "TITAN": "Titan Company",
-        "SUNPHARMA": "Sun Pharma"
+        "NTPC.NS": "NTPC",
+        "VMM.NS": "Vishal Mega Mart",
+        "SAGILITY.NS": "Sagility India",
+        "TATAMOTORS.NS": "Tata Motors",
+        "TCS.NS": "TCS",
+        "SBIN.NS": "SBI",
+        "KALYANKJIL.NS": "Kalyan Jewellers",
+        "SWANENERGY.NS": "Swan Energy",
+        "PRAJIND.NS": "Praj Industries",
+        "RELIANCE.NS": "Reliance Industries",
+        "HDFCBANK.NS": "HDFC Bank",
+        "INFY.NS": "Infosys",
+        "ICICIBANK.NS": "ICICI Bank",
+        "HINDUNILVR.NS": "Hindustan Unilever",
+        "BAJFINANCE.NS": "Bajaj Finance",
+        "LT.NS": "Larsen & Toubro",
+        "AXISBANK.NS": "Axis Bank",
+        "ADANIENT.NS": "Adani Enterprises",
+        "BHARTIARTL.NS": "Bharti Airtel",
+        "HCLTECH.NS": "HCL Technologies",
+        "KOTAKBANK.NS": "Kotak Mahindra Bank",
+        "ITC.NS": "ITC",
+        "ASIANPAINT.NS": "Asian Paints",
+        "MARUTI.NS": "Maruti Suzuki",
+        "TITAN.NS": "Titan Company",
+        "SUNPHARMA.NS": "Sun Pharma"
     }
     
-    query = company_map.get(clean_ticker, clean_ticker)
+    query = company_map.get(ticker, ticker.split('.')[0])
     url = f"https://newsapi.org/v2/everything?q={query}&language=en&sortBy=publishedAt&pageSize=5&apiKey={api_key}"
     
     try:
@@ -341,210 +329,6 @@ def prophet_forecast(data, forecast_days, country='IN'):
     
     forecast = model.predict(future)
     return model, forecast
-
-def tune_tft_hyperparameters(train_dataloader, val_dataloader):
-    """Optimize TFT hyperparameters using Optuna"""
-    logger.info("Tuning TFT hyperparameters...")
-    
-    def objective(trial):
-        hidden_size = trial.suggest_int("hidden_size", 8, 32)
-        dropout = trial.suggest_float("dropout", 0.1, 0.5)
-        learning_rate = trial.suggest_float("learning_rate", 1e-3, 1e-1, log=True)
-        attention_head_size = trial.suggest_int("attention_head_size", 1, 4)
-        hidden_continuous_size = trial.suggest_int("hidden_continuous_size", 4, 16)
-        
-        early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=3, verbose=False, mode="min")
-        
-        tft = TemporalFusionTransformer.from_dataset(
-            train_dataloader.dataset,
-            learning_rate=learning_rate,
-            hidden_size=hidden_size,
-            attention_head_size=attention_head_size,
-            dropout=dropout,
-            hidden_continuous_size=hidden_continuous_size,
-            output_size=3,
-            loss=QuantileLoss(quantiles=[0.1, 0.5, 0.9]),
-            reduce_on_plateau_patience=2,
-        )
-        
-        trainer = pl.Trainer(
-            max_epochs=15,
-            gpus=0,
-            enable_progress_bar=False,
-            gradient_clip_val=0.1,
-            callbacks=[early_stop_callback],
-            limit_train_batches=15,
-            enable_checkpointing=True,
-        )
-        
-        trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-        return trainer.callback_metrics["val_loss"].item()
-    
-    study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=10)
-    
-    logger.info(f"Best hyperparameters: {study.best_params}")
-    return study.best_params
-
-def tft_forecast(data, forecast_days, tune=False):
-    """Perform time series forecasting using Temporal Fusion Transformer"""
-    # Add technical indicators
-    data = calculate_technical_indicators(data.copy())
-    
-    # Prepare data for TFT
-    df = data.reset_index()
-    df.rename(columns={'Date': 'date'}, inplace=True)
-    df['time_idx'] = np.arange(len(df))
-    df['series'] = "stock"
-    df['date'] = pd.to_datetime(df['date'])
-    
-    # Add additional features
-    df['day'] = df['date'].dt.day.astype(str)
-    df['dayofweek'] = df['date'].dt.dayofweek.astype(str)
-    df['month'] = df['date'].dt.month.astype(str)
-    df['quarter'] = df['date'].dt.quarter.astype(str)
-    
-    # Define features
-    features = ['Close', 'SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Signal', 
-                'MACD_Hist', 'BB_Upper', 'BB_Lower', 'BB_Width', 'Volatility',
-                'Return_1d', 'Return_3d', 'Return_5d', 'Return_7d']
-    
-    available_features = [f for f in features if f in df.columns]
-    
-    # Define training parameters
-    max_prediction_length = forecast_days
-    max_encoder_length = min(180, len(df) - max_prediction_length - 1)
-    
-    if max_encoder_length < 60:
-        raise ValueError("Insufficient data for TFT forecasting. Need at least 60 days of data.")
-    
-    training_cutoff = df["time_idx"].max() - max_prediction_length
-    
-    # Create dataset
-    training = TimeSeriesDataSet(
-        df[df["time_idx"] <= training_cutoff],
-        time_idx="time_idx",
-        target="Close",
-        group_ids=["series"],
-        min_encoder_length=max_encoder_length // 2,
-        max_encoder_length=max_encoder_length,
-        min_prediction_length=1,
-        max_prediction_length=max_prediction_length,
-        static_categoricals=["series"],
-        time_varying_known_categoricals=["day", "dayofweek", "month", "quarter"],
-        time_varying_known_reals=["time_idx"],
-        time_varying_unknown_reals=available_features,
-        target_normalizer=GroupNormalizer(groups=["series"], transformation="softplus"),
-        add_relative_time_idx=True,
-        add_target_scales=True,
-        add_encoder_length=True,
-    )
-    
-    # Create validation set
-    validation = TimeSeriesDataSet.from_dataset(training, df, predict=True, stop_randomization=True)
-    
-    # Create dataloaders
-    batch_size = 16
-    train_dataloader = training.to_dataloader(train=True, batch_size=batch_size, num_workers=0)
-    val_dataloader = validation.to_dataloader(train=False, batch_size=batch_size, num_workers=0)
-    
-    # Tune hyperparameters if requested
-    best_params = {
-        'hidden_size': 16,
-        'attention_head_size': 2,
-        'dropout': 0.1,
-        'learning_rate': 0.01,
-        'hidden_continuous_size': 8
-    }
-    
-    if tune:
-        try:
-            best_params = tune_tft_hyperparameters(train_dataloader, val_dataloader)
-        except Exception as e:
-            logger.error(f"Hyperparameter tuning failed: {str(e)}")
-    
-    # Configure TFT with best parameters
-    pl.seed_everything(42)
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=5, verbose=False, mode="min")
-    
-    tft = TemporalFusionTransformer.from_dataset(
-        training,
-        learning_rate=best_params['learning_rate'],
-        hidden_size=best_params['hidden_size'],
-        attention_head_size=best_params['attention_head_size'],
-        dropout=best_params['dropout'],
-        hidden_continuous_size=best_params['hidden_continuous_size'],
-        output_size=3,
-        loss=QuantileLoss(quantiles=[0.1, 0.5, 0.9]),
-        reduce_on_plateau_patience=3,
-    )
-    
-    # Train model
-    trainer = pl.Trainer(
-        max_epochs=20,
-        gpus=0,
-        enable_progress_bar=False,
-        gradient_clip_val=0.1,
-        callbacks=[early_stop_callback],
-        limit_train_batches=20,
-        enable_checkpointing=True,
-    )
-    
-    trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-    
-    # Generate predictions
-    raw_predictions, x = tft.predict(val_dataloader, mode="raw", return_x=True)
-    
-    # Extract forecast values
-    forecast = raw_predictions[0].output.prediction[1].cpu().numpy().flatten()  # P50
-    lower_band = raw_predictions[0].output.prediction[0].cpu().numpy().flatten()  # P10
-    upper_band = raw_predictions[0].output.prediction[2].cpu().numpy().flatten()  # P90
-    
-    # Get actual values for comparison
-    actuals = torch.cat([y[0] for x, y in iter(val_dataloader)]).cpu().numpy()
-    
-    # Calculate RMSE
-    train_rmse = np.sqrt(mean_squared_error(actuals.flatten()[:len(forecast)], forecast))
-    
-    # Extract attention weights
-    attention = tft.interpret_output(raw_predictions, reduction="none")[1]['attention'][0].detach().cpu().numpy()
-    
-    # Calculate feature importance using SHAP
-    explainer = shap.DeepExplainer(tft, val_dataloader)
-    shap_values = explainer.shap_values(val_dataloader)
-    
-    return {
-        'forecast': forecast,
-        'upper_band': upper_band,
-        'lower_band': lower_band,
-        'train_rmse': train_rmse,
-        'test_rmse': train_rmse,
-        'attention': attention,
-        'shap_values': shap_values,
-        'features': available_features,
-        'model': tft
-    }
-
-def ensemble_forecast(prophet_forecast, tft_forecast, actuals, forecast_days):
-    """Combine Prophet and TFT forecasts using weighted averaging"""
-    # Calculate weights based on recent performance
-    prophet_mae = mean_absolute_error(actuals[-30:], prophet_forecast[-30-forecast_days:-forecast_days])
-    tft_mae = mean_absolute_error(actuals[-30:], tft_forecast[:30])
-    
-    # Use inverse MAE as weights
-    prophet_weight = 1 / prophet_mae
-    tft_weight = 1 / tft_mae
-    total_weight = prophet_weight + tft_weight
-    
-    # Normalize weights
-    prophet_weight /= total_weight
-    tft_weight /= total_weight
-    
-    # Combine forecasts
-    combined_forecast = (prophet_forecast[-forecast_days:] * prophet_weight + 
-                         tft_forecast * tft_weight)
-    
-    return combined_forecast, prophet_weight, tft_weight
 
 # Module 5: Portfolio Optimization
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1310,8 +1094,8 @@ CUSTOM_CSS = """
     }
     
     @keyframes cardAppear {
-        0% { opacity: 0; transform: scale(0.95); }
-        100% { opacity: 1; transform: scale(1); }
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
     }
     
     .feature-card:hover {
@@ -1375,7 +1159,7 @@ CUSTOM_CSS = """
         position: absolute;
         top: -2px;
         left: -2px;
-        right: -2px;
+        right: -2极
         bottom: -2px;
         background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
@@ -1387,14 +1171,14 @@ CUSTOM_CSS = """
     @keyframes pulse {
         0% { box-shadow: 0 0 0 0 rgba(0, 200, 83, 0.4); }
         70% { box-shadow: 0 0 0 15px rgba(0, 200, 83, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(0, 200, 83, 0); }
+        100% { box-shadow: 极 0 0 0 0 rgba(0, 200, 83, 0); }
     }
     
     .gauge-value {
         font-size: 2.5rem;
         font-weight: 800;
         color: var(--accent);
-        text-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        text-shadow: 0 极 10px rgba(0, 0, 0, 0.5);
         margin: 10px 0;
     }
     
@@ -1402,7 +1186,7 @@ CUSTOM_CSS = """
         background: rgba(19, 28, 58, 0.8) !important;
         backdrop-filter: blur(10px);
         border-radius: 15px;
-        padding: 10px;
+        padding: 10极;
         margin-bottom: 30px;
         border: 1px solid var(--card-border);
         position: relative;
@@ -1417,7 +1201,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93极9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1432,7 +1216,7 @@ CUSTOM_CSS = """
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
     }
     
-    .stTabs [role="tab"] {
+    .stTabs [role极="tab"] {
         color: var(--light) !important;
         padding: 10px 20px !important;
         border-radius: 12px !important;
@@ -1466,9 +1250,9 @@ CUSTOM_CSS = """
         right: -2px;
         bottom: -2px;
         background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
-        z-index: -1;
+极        z-index: -1;
         filter: blur(5px);
-        animation: glowing 3s ease-in-out infinite alternate;
+        animation: glowing 3极s ease-in-out infinite alternate;
         background-size: 400% 400%;
     }
     
@@ -1494,7 +1278,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052极4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1562,9 +1346,9 @@ CUSTOM_CSS = """
         margin: 20px 0;
         border: 1px solid var(--card-border);
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-        backdrop-filter: blur(10px);
+        backdrop-filter: blur(极0px);
         position: relative;
-        overflow: hidden;
+极        overflow: hidden;
         z-index: 1;
     }
     
@@ -1599,7 +1383,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976极c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -1626,23 +1410,16 @@ CUSTOM_CSS = """
 </style>
 """
 
-
 # ------------------ MAIN APP ------------------
 def main():
     # Apply custom CSS
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     
-    # Header with market sentiment
-    market_sentiment, sentiment_details = get_market_sentiment()
-    sentiment_color = "#00c853" if market_sentiment == "Bullish" else "#ff5252" if market_sentiment == "Bearish" else "#2962ff"
-    
-    st.markdown(f'<h1 class="header">🚀 QUANTUM STOCK ANALYTICS</h1>', unsafe_allow_html=True)
-    st.markdown(f"""
+    # Header
+    st.markdown('<h1 class="header">🚀 QUANTUM STOCK ANALYTICS</h1>', unsafe_allow_html=True)
+    st.markdown("""
     <div style="text-align:center; margin-bottom:30px;">
         <h3 class="glow-text">AI-Powered Financial Intelligence Platform</h3>
-        <div style="background:{sentiment_color}; padding:10px; border-radius:10px; display:inline-block; margin:10px;">
-            <h4 style="color:white; margin:0;">Market Sentiment: {market_sentiment}</h4>
-        </div>
     </div>
     """, unsafe_allow_html=True)
     st.write(f"<div style='text-align:center; margin-bottom:30px;'>Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>", unsafe_allow_html=True)
@@ -1650,9 +1427,30 @@ def main():
     # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")
     
-    # Updated default tickers with correct symbols
+    # Add Indian indices selection
+    st.sidebar.subheader("📊 Indian Market Indices")
+    selected_index = st.sidebar.selectbox("Select Index", list(INDIAN_INDICES.keys()))
+    
+    # Fetch and display index data
+    index_data, index_sentiment = get_index_data(selected_index)
+    if index_data is not None and not index_data.empty:
+        current_price = index_data['Close'].iloc[-1]
+        prev_close = index_data['Close'].iloc[-2] if len(index_data) > 1 else current_price
+        change = ((current_price - prev_close) / prev_close) * 100
+        
+        st.sidebar.markdown(f"""
+            <div class="metric-card">
+                <b>{selected_index}</b><br>
+                Price: {current_price:.2f}<br>
+                Change: {change:.2f}%<br>
+                Sentiment: <b>{index_sentiment}</b>
+            </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.sidebar.warning("Could not fetch index data")
+    
     default_tickers = [
-        "NTPC.NS", "VISHWARAJ.NS", "SAGILITY.NS", "TATAMOTORS.NS",  # Updated Vishal Mega Mart ticker
+        "NTPC.NS", "VMM.NS", "SAGILITY.NS", "TATAMOTORS.NS",
         "TCS.NS", "SBIN.NS", "KALYANKJIL.NS", "SWANENERGY.NS", "PRAJIND.NS",
         "RELIANCE.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", "HINDUNILVR.NS",
         "BAJFINANCE.NS", "LT.NS", "AXISBANK.NS", "ADANIENT.NS", "BHARTIARTL.NS",
@@ -1677,17 +1475,6 @@ def main():
             <small>{'Bullish' if sentiment_value > 60 else 'Bearish' if sentiment_value < 40 else 'Neutral'} Market</small>
         </div>
     """, unsafe_allow_html=True)
-    
-    # Indian Market Indices
-    st.sidebar.markdown("### 🇮🇳 Indian Indices")
-    for index_name, details in sentiment_details.items():
-        trend_icon = "📈" if details['trend'] == "Bullish" else "📉"
-        st.sidebar.markdown(f"""
-            <div style="background:rgba(0,0,0,0.2); padding:10px; border-radius:5px; margin:5px 0;">
-                <b>{index_name}</b>: {details['current']:.2f} {trend_icon}<br>
-                <small>20MA: {details['ma_20']:.2f} | 50MA: {details['ma_50']:.2f}</small>
-            </div>
-        """, unsafe_allow_html=True)
     
     # Alert system
     st.sidebar.markdown("### 🔔 Custom Alerts")
@@ -1727,10 +1514,10 @@ def main():
     # Calculate technical indicators
     data = calculate_technical_indicators(data)
 
-    # Create tabs
+    # Create tabs - added new tab for indices
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "🏠 Home", "📈 Market Data", "🔮 Forecasting", "📰 Sentiment", 
-        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time", "🇮🇳 Market Overview"
+        "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time", "📊 Indices"
     ])
 
     # Home Tab
@@ -1746,24 +1533,6 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        # Market Overview
-        st.markdown('<div class="subheader">📊 Indian Market Overview</div>', unsafe_allow_html=True)
-        
-        col1, col2, col3, col4 = st.columns(4)
-        indices_to_show = list(sentiment_details.keys())[:4]  # Show first 4 indices
-        
-        for i, index_name in enumerate(indices_to_show):
-            details = sentiment_details[index_name]
-            with [col1, col2, col3, col4][i]:
-                trend_color = "#00c853" if details['trend'] == "Bullish" else "#ff5252"
-                st.markdown(f"""
-                <div class="metric-card">
-                    <b>{index_name}</b><br>
-                    <span style="color:{trend_color}; font-size:1.5em;">{details['current']:.2f}</span><br>
-                    <small>Trend: {details['trend']}</small>
-                </div>
-                """, unsafe_allow_html=True)
-        
         # Key Features Section
         st.markdown('<div class="subheader">✨ Key Features</div>', unsafe_allow_html=True)
         
@@ -1774,7 +1543,7 @@ def main():
                 <h4>📈 Real-Time Market Intelligence</h4>
                 <ul>
                     <li>Live price tracking with candlestick charts</li>
-                    <li>Technical indicators (RSI, MACD, Moving Averages)</li>
+                    <li>Technical indicators (RSI, MAC极, Moving Averages)</li>
                     <li>Options analysis & payoff visualization</li>
                     <li>Institutional activity tracking</li>
                 </ul>
@@ -1788,7 +1557,7 @@ def main():
                 <ul>
                     <li>Prophet time-series forecasting</li>
                     <li>Lightweight trend + volatility model</li>
-                    <li>Confidence interval projections</li>
+                    <li>Confidence interval projections</极>
                     <li>Risk assessment metrics</li>
                 </ul>
             </div>
@@ -1806,16 +1575,65 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
+        # Unique Features Section
+        st.markdown('<div class="subheader">💎 Advanced Features</div>', unsafe_allow_html=True)
+        
+        col4, col5 = st.columns([2, 1])
+        with col4:
+            st.markdown("""
+            <div class极="feature-card">
+                <h4>🧠 Sentiment-Driven Analysis</h4>
+                <p>Our proprietary sentiment engine combines:</p>
+                <ul>
+                    <li>FinBERT financial sentiment analysis model</li>
+                    <li>Real-time news aggregation from global sources</li>
+                    <li>Earnings surprise predictions</li>
+                    <li>Sentiment-weighted risk assessment</li>
+                </ul>
+            </div>
+            
+            <div class="feature-card">
+                <h4>⚡ AI Investment Assistant</h4>
+                <ul>
+                    <li>Natural language query processing</li>
+                    <li>Personalized investment recommendations</li>
+                    <li>Strategy backtesting engine</li>
+                    <li>Real-time market insights</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col5:
+            st.markdown("""
+            <div class="feature-card" style="text-align:center;">
+                <h3 style="color:white;">Tech Stack</h3>
+                <div style="font-size:3rem;">🤖</div>
+                <p><strong>AI-Powered Analytics</strong></p>
+                <ul style="text-align:left;">
+                    <li>Prophet Forecasting</li>
+                    <li>Linear Trend Model</li>
+                    <li>FinBERT NLP</li>
+                    <li>CVXPY Optimization</li>
+                </ul>
+                <p><strong>Real-Time Data</strong></p>
+                <ul style="text-align:left;">
+                    <li>Yahoo Finance API</li>
+                    <li>NewsAPI Integration</li>
+                    <li>Streamlit Live Updates</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+        
         # Usage Instructions
         st.markdown('<div class="subheader">🚦 Getting Started</div>', unsafe_allow_html=True)
         st.markdown("""
-        <div class="feature-card">
+        <极iv class="feature-card">
             <ol style="font-size:1.1em;">
                 <li><b style="color:#00c853;">Select a stock</b> from the sidebar dropdown</li>
                 <li><b style="color:#00c853;">Adjust date ranges</b> and forecast periods</li>
                 <li><b style="color:#00c853;">Explore different tabs</b> for various analyses</li>
                 <li><b style="color:#00c853;">Build portfolios</b> with multiple stocks</li>
-                <li><b style="color:#00c853;">Ask questions</b> to the AI Assistant</li>
+                <li><b style极="color:#00c853;">Ask questions</b> to the AI Assistant</极i>
                 <li><b style="color:#00c853;">Test strategies</b> with historical data</li>
             </ol>
             <div style="text-align:center; margin-top:20px; padding:10px; background:rgba(0,200,83,0.1); border-radius:10px;">
@@ -1826,8 +1644,7 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-
-     # Market Data Tab
+    # Market Data Tab
     with tab2:
         st.markdown('<div class="subheader">Real-Time Market Data</div>', unsafe_allow_html=True)
         
@@ -1852,7 +1669,7 @@ def main():
                 # Calculate moving averages
                 if len(data) > 20:
                     data['MA20'] = data['Close'].rolling(window=20).mean()
-                    fig.add_trace(go.Scatter(
+                    fig.add_trace极(go.Scatter(
                         x=data.index, y=data['MA20'],
                         mode='lines', name='20-day MA',
                         line=dict(color='orange', width=2)
@@ -1902,7 +1719,7 @@ def main():
                     ))
                 
                 # RSI on secondary axis
-                if 'RSI' in data.columns:
+                if 'RSI极' in data.columns:
                     fig_tech.add_trace(go.Scatter(
                         x=data.index, y=data['RSI'],
                         mode='lines', name='RSI',
@@ -1949,12 +1766,12 @@ def main():
                         yaxis_title='Profit/Loss',
                         template='plotly_dark'
                     )
-                    st.plotly_chart(fig_call, use_container_width=True)
+                    st.plotly_chart(f极_call, use_container_width=True)
                     
                 with col2:
                     st.markdown("#### Put Option Payoff")
                     strike_put = st.slider("Strike Price (Put)", current_price * 0.8, current_price * 1.2, current_price * 0.95)
-                    premium_put = st.slider("Premium (Put)", 0.5, 20.0, 2.0)
+                    premium_put = st.s极ider("Premium (Put)", 0.5, 20.0, 2.0)
                     
                     prices, payoff_put = create_options_payoff(strike_put, premium_put, 'put', contracts)
                     fig_put = go.Figure()
@@ -2034,99 +1851,26 @@ def main():
             except Exception as e:
                 st.error(f"Prophet forecasting error: {str(e)}")
             
-            # TFT forecasting
+            # Lightweight forecasting model as fallback
             try:
-                with st.spinner('Running TFT forecast with hyperparameter tuning...'):
-                    tft_results = tft_forecast(data, forecast_days, tune=tune_hyperparams)
+                with st.spinner('Running lightweight forecasting model...'):
+                    # Simple moving average forecast
+                    forecast_dates = pd.date_range(start=data.index[-1], periods=forecast_days+1)[1:]
                     
-                    st.subheader("TFT Neural Network Forecast")
-                    fig_tft = go.Figure()
-                    fig_tft.add_trace(go.Scatter(
-                        x=data.index,
-                        y=data['Close'],
-                        mode='lines',
-                        name='Actual Price',
-                        line=dict(color='#4F8BF9')
-                    ))
-                    
-                    last_date = data.index[-1]
-                    forecast_dates = pd.date_range(start=last_date, periods=forecast_days+1)[1:]
-                    
-                    fig_tft.add_trace(go.Scatter(
-                        x=forecast_dates,
-                        y=tft_results['forecast'],
-                        mode='lines',
-                        name='TFT Forecast',
-                        line=dict(color='#00FF00', width=3)
-                    ))
-                    
-                    fig_tft.add_trace(go.Scatter(
-                        x=forecast_dates,
-                        y=tft_results['upper_band'],
-                        mode='lines',
-                        line=dict(width=0),
-                        showlegend=False
-                    ))
-                    
-                    fig_tft.add_trace(go.Scatter(
-                        x=forecast_dates,
-                        y=tft_results['lower_band'],
-                        mode='lines',
-                        fill='tonexty',
-                        fillcolor='rgba(0, 255, 0, 0.2)',
-                        line=dict(width=0),
-                        name='Confidence Band'
-                    ))
-                    
-                    fig_tft.update_layout(
-                        title='TFT Price Forecast with Confidence Bands',
-                        xaxis_title='Date',
-                        yaxis_title='Price',
-                        template='plotly_dark',
-                        height=500
-                    )
-                    st.plotly_chart(fig_tft, use_container_width=True)
-                    
-                    col_tft1, col_tft2 = st.columns(2)
-                    col_tft1.metric("Train RMSE", f"{tft_results['train_rmse']:.2f}")
-                    col_tft2.metric("Test RMSE", f"{tft_results['test_rmse']:.2f}")
-                    
-                    # Track performance
-                    rt_monitor.monitor_performance("TFT", tft_results['train_rmse'])
-                    
-                    # Attention Visualization
-                    if 'attention' in tft_results and tft_results['attention'] is not None:
-                        st.subheader("Attention Weights")
-                        st.markdown('<div class="attention-heatmap">', unsafe_allow_html=True)
-                        fig_attn = plot_attention_weights(tft_results['attention'])
-                        st.pyplot(fig_attn)
-                        st.markdown('</div>', unsafe_allow_html=True)
-                        st.caption("Attention weights show which historical time steps the model focuses on when making predictions")
-                    
-                    # SHAP Explainability
-                    if 'shap_values' in tft_results and 'features' in tft_results:
-                        st.subheader("TFT Feature Importance")
-                        fig_shap = plot_shap_values(tft_results['shap_values'], data[tft_results['features']])
-                        st.pyplot(fig_shap)
-
-                    tft_success = True
-            except Exception as e:
-                st.error(f"TFT forecasting error: {str(e)}")
-            
-            # Ensemble Forecasting (only if both succeeded)
-            if locals().get('enable_ensemble', False) and prophet_success and tft_success:
-                try:
-                    with st.spinner('Combining forecasts with ensemble model...'):
-                        combined_forecast, prophet_weight, tft_weight = ensemble_forecast(
-                            prophet_forecast_df['yhat'].values,
-                            tft_results['forecast'],
-                            data['Close'].values,
-                            forecast_days
-                        )
+                    # Use multiple moving averages for prediction
+                    if len(data) > 50:
+                        ma20 = data['Close'].rolling(window=20).mean().iloc[-1]
+                        ma50 = data['Close'].rolling(window=50).mean().iloc[-1]
                         
-                        st.subheader("Hybrid Ensemble Forecast")
-                        fig_ensemble = go.Figure()
-                        fig_ensemble.add_trace(go.Scatter(
+                        # Simple weighted average
+                        simple_forecast = (ma20 * 0.7 + ma50 * 0.3)
+                        
+                        # Create a simple forecast series
+                        forecast_values = [simple_forecast] * forecast_days
+                        
+                        st.subheader("Simple Moving Average Forecast")
+                        fig_simple = go.Figure()
+                        fig_simple.add_trace(go.Scatter(
                             x=data.index,
                             y=data['Close'],
                             mode='lines',
@@ -2134,37 +1878,26 @@ def main():
                             line=dict(color='#4F8BF9')
                         ))
                         
-                        fig_ensemble.add_trace(go.Scatter(
+                        fig_simple.add_trace(go.Scatter(
                             x=forecast_dates,
-                            y=combined_forecast,
+                            y=forecast_values,
                             mode='lines',
-                            name='Ensemble Forecast',
-                            line=dict(color='#FF00FF', width=3)
+                            name='Simple Forecast',
+                            line=dict(color='#FF00FF', width=3, dash='dash')
                         ))
                         
-                        fig_ensemble.update_layout(
-                            title='Hybrid Prophet-TFT Ensemble Forecast',
+                        fig_simple.update_layout(
+                            title='Simple Moving Average Forecast',
                             xaxis_title='Date',
                             yaxis_title='Price',
                             template='plotly_dark',
                             height=500
                         )
-                        st.plotly_chart(fig_ensemble, use_container_width=True)
+                        st.plotly_chart(fig_simple, use_container_width=True)
                         
-                        col_ens1, col_ens2 = st.columns(2)
-                        col_ens1.metric("Prophet Weight", f"{prophet_weight:.2%}")
-                        col_ens2.metric("TFT Weight", f"{tft_weight:.2%}")
-                        
-                        # Check for prediction alerts
-                        predicted_return = (combined_forecast[-1] / data['Close'].iloc[-1] - 1) * 100
-                        if abs(predicted_return) > alert_threshold:
-                            direction = "increase" if predicted_return > 0 else "decrease"
-                            st.warning(f"⚠️ Significant predicted {direction}: {predicted_return:.1f}% over {forecast_days} days")
-                
-                except Exception as e:
-                    st.error(f"Ensemble forecasting error: {str(e)}")
-
-
+                        st.info("Using simple moving average forecast as fallback")
+            except Exception as e:
+                st.error(f"Simple forecasting error: {str(e)}")
 
     # Sentiment Analysis Tab
     with tab4:
@@ -2216,7 +1949,7 @@ def main():
                 <div class="news-item {style}">
                     <b>{news['title']}</b><br>
                     <i>{news.get('date', '')[:10]}</i><br>
-                    <i>Sentiment:</i> {label.capitalize()} ({score:.2f})<br>
+                    <i>Sentiment:</i> {label.capitalize()} ({score:.2f})极<br>
                     <a href="{news['link']}" target="_blank">Read more</a>
                 </div>
                 """, unsafe_allow_html=True)
@@ -2247,7 +1980,7 @@ def main():
                 
                 if not earnings_data.empty:
                     fig_earn = go.Figure()
-                    fig_earn.add_trace(go.Bar(
+                    fig_earn.add极race(go.Bar(
                         x=earnings_data.index,
                         y=earnings_data['Surprise (%)'],
                         name='Earnings Surprise',
@@ -2261,7 +1994,7 @@ def main():
                     )
                     st.plotly_chart(fig_earn, use_container_width=True)
                     
-                    last_earnings = earnings_data.iloc[-1]
+                    last_earnings = earnings_data.iloc极[-1]
                     col_earn1, col_earn2, col_earn3 = st.columns(3)
                     col_earn1.metric("Reported EPS", f"{last_earnings['Reported EPS']:.2f}")
                     col_earn2.metric("Estimate", f"{last_earnings['EPS Estimate']:.2f}")
@@ -2321,7 +2054,7 @@ def main():
 
             if weights is None:
                 st.warning("Optimization failed. Using equal weights")
-                weights = np.ones(len(portfolio_data.columns)) / len(portfolio_data.columns)
+                weights = np.ones(len(portfolio_data.columns)) / len极(portfolio_data.columns)
 
             # Calculate annualized returns
             expected_returns = {}
@@ -2337,7 +2070,7 @@ def main():
 
             st.subheader("Optimized Portfolio Allocation")
             
-            # Create allocation dataframe
+极            # Create allocation dataframe
             allocation_df = pd.DataFrame({
                 'Stock': portfolio_data.columns,
                 'Weight': [f"{w*100:.2f}%" for w in weights],
@@ -2396,9 +2129,9 @@ def main():
             # Correlation heatmap
             st.subheader("Stock Correlation Matrix")
             corr = returns.corr()
-            fig_corr = go.Figure(go.Heatmap(
+            fig_corr = go.Figure(go极.Heatmap(
                 z=corr.values,
-                x=corr.columns,
+                x=cor极.columns,
                 y=corr.index,
                 colorscale='RdYlGn',
                 zmin=-1,
@@ -2429,7 +2162,7 @@ def main():
             col_m2.markdown(f"""
                 <div class="macro-metric">
                     <h5>Interest Rate</h5>
-                    <h3>{macro_data['interest_rate']}%</h3>
+                    <h3>{macro_data['interest_rate']极}%</h3>
                     <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
@@ -2453,7 +2186,7 @@ def main():
             col_m5.markdown(f"""
                 <div class="macro-metric">
                     <h5>Consumer Sentiment</h5>
-                    <h3>{macro_data['consumer_sentiment']}</h3>
+                    <h3>{macro_data['consumer_sentiment']}</极3>
                     <small>Source: {macro_data['source']}</small>
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
@@ -2493,7 +2226,7 @@ def main():
         st.markdown('<div class="subheader">Get insights and recommendations powered by AI</div>', unsafe_allow_html=True)
         
         # Sample questions
-        col_q1, col_q2, col_q3 = st.columns(3)
+        col_q1, col_q极, col_q3 = st.columns(3)
         with col_q1:
             if st.button("What's the risk profile for this stock?", key="q1"):
                 st.session_state.ai_query = "What's the risk profile for this stock?"
@@ -2529,12 +2262,12 @@ def main():
         st.subheader("Personalized Recommendations")
         st.markdown(f"""
         <div class="feature-card">
-            <h4>Based on your profile: {user_risk_profile} risk, {user_investment_goal} focus</h4>
+            <h4>Based on your profile: {user_risk_profile} risk, {user_investment_goal极} focus</h4>
             <ul>
                 <li><b>Asset Allocation:</b> {np.random.randint(60,80)}% equities, {np.random.randint(20,30)}% bonds, {np.random.randint(5,15)}% alternatives</li>
                 <li><b>Sector Focus:</b> Technology ({np.random.randint(30,40)}%), Healthcare ({np.random.randint(15,25)}%), Financials ({np.random.randint(10,20)}%)</li>
                 <li><b>Position Sizing:</b> Limit single positions to {np.random.randint(5,10)}% of portfolio</li>
-                <li><b>Rebalancing:</b> Quarterly rebalancing recommended</li>
+                <极i><b>Rebalancing:</b> Quarterly rebalancing recommended</li>
                 <li><b>Tax Optimization:</b> {'Tax-loss harvesting' if np.random.random() > 0.5 else 'Long-term holding strategy'}</li>
             </ul>
         </div>
@@ -2544,7 +2277,7 @@ def main():
         st.subheader("Market Insights")
         st.markdown(f"""
         <div class="feature-card">
-            <h4>Current Market Conditions</h4>
+            <h4极>Current Market Conditions</h4>
             <p>Our analysis of macroeconomic factors and market sentiment indicates:</p>
             <ul>
                 <li><b>Market Phase:</b> {'Bull market' if sentiment_value > 60 else 'Bear market' if sentiment_value < 40 else 'Neutral market'}</li>
@@ -2581,7 +2314,7 @@ def main():
             params['oversold'] = st.slider("Oversold Level", 0, 40, 30)
             params['overbought'] = st.slider("Overbought Level", 60, 100, 70)
         elif strategy == "Bollinger Band Reversion":
-            params['bb_period'] = st.slider("Bollinger Period", 10, 50, 20)
+            params['bb_period'] = st.slider("Bollinger Period", 10, 50极, 20)
             params['std_dev'] = st.slider("Standard Deviations", 1.0, 3.0, 2.0)
         elif strategy == "MACD Crossover":
             params['fast'] = st.slider("Fast EMA", 5, 20, 12)
@@ -2627,10 +2360,10 @@ def main():
                 ))
             
             # Add trade markers
-            if 'trades' in results:
+            if 'trades极' in results:
                 buy_dates = [t[1] for t in results['trades'] if t[0] == 'buy']
                 buy_prices = [t[2] for t in results['trades'] if t[0] == 'buy']
-                sell_dates = [t[1] for t in results['trades'] if t[0] == 'sell']
+                sell_dates = [t[1] for t in results['trades'] if极 t[0] == 'sell']
                 sell_prices = [t[2] for t in results['trades'] if t[0] == 'sell']
                 
                 if buy_dates:
@@ -2658,7 +2391,7 @@ def main():
                 yaxis2=dict(
                     title='Portfolio Value',
                     overlaying='y',
-                    side='right',
+                    side极='right',
                     showgrid=False
                 ),
                 template='plotly_dark',
@@ -2700,7 +2433,7 @@ def main():
         st.subheader("Model Performance Monitoring")
         if rt_monitor.performance_history:
             perf_df = pd.DataFrame(rt_monitor.performance_history)
-            fig_perf = px.line(perf_df, x='timestamp', y='rmse', color='model', 
+            fig_per极 = px.line(perf_df, x='timestamp', y='rmse', color='model', 
                               title='Model RMSE Over Time', markers=True)
             fig_perf.update_layout(template='plotly_dark')
             st.plotly_chart(fig_perf, use_container_width=True)
@@ -2732,131 +2465,123 @@ def main():
                     st.success("Models retrained successfully!")
         else:
             next_retrain = rt_monitor.last_retrain + timedelta(days=7)
-            st.info(f"Models up to date. Next retraining scheduled for {next_retrain.strftime('%Y-%m-%d')}")       
+            st.info(f"Models up to date. Next retraining scheduled for {next_retrain.strftime('%Y-%m-%d')}")
 
-
-    # Market Overview Tab
+    # New Indices Tab
     with tab9:
-        st.markdown('<div class="subheader">🇮🇳 Indian Market Overview</div>', unsafe_allow_html=True)
+        st.markdown('<div class="header">📊 Indian Market Indices</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subheader">Real-time performance of major Indian indices</div>', unsafe_allow_html=True)
         
-        # Display all indices with charts
-        for index_name in INDIAN_INDICES.keys():
-            index_data = get_index_data(index_name)
+        # Display all major indices
+        st.subheader("Major Indian Indices")
+        
+        # Create columns for index cards
+        col1, col2, col3 = st.columns(3)
+        
+        # Fetch and display data for each index
+        for i, (index_name, index_symbol) in enumerate(INDIAN_INDICES.items()):
+            with [col1, col2, col3][i % 3]:
+                index_data, sentiment = get_index_data(index_name, "1mo")
+                
+                if index_data is not None and not index_data.empty:
+                    current_price = index_data['Close'].iloc[-1]
+                    prev_close = index_data['Close'].iloc[-2] if len(index_data) > 1 else current_price
+                    change = ((current_price - prev_close) / prev_close) * 100
+                    
+                    # Determine color based on change
+                    color = "green" if change >= 0 else "red"
+                    
+                    st.markdown(f"""
+                        <div class="metric-card">
+                            <h3>{index_name}</h3>
+                            <p style="font-size: 1.5rem; color: {color};"><b>{current_price:.2f}</b></p>
+                            <p>Change: <span style="color: {color};">{change:.2f}%</span></p>
+                            <p>Sentiment: <b>{sentiment}</b></p>
+                        </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.warning(f"Could not fetch data for {index_name}")
+        
+        # Display historical chart for selected index
+        st.subheader(f"{selected_index} Historical Performance")
+        selected_index_data, _ = get_index_data(selected_index, "6mo")
+        
+        if selected_index_data is not None and not selected_index_data.empty:
+            fig_index = go.Figure()
+            fig_index.add_trace(go.Candlestick(
+                x=selected_index_data.index,
+                open=selected_index_data['Open'],
+                high=selected_index_data['High'],
+                low=selected_index_data['Low'],
+                close=selected_index_data['Close'],
+                name=selected_index
+            ))
             
-            if index_data is not None and not index_data.empty:
-                # Calculate metrics
-                current_price = index_data['Close'].iloc[-1]
-                prev_close = index_data['Close'].iloc[-2] if len(index_data) > 1 else current_price
-                change = ((current_price - prev_close) / prev_close * 100) if prev_close != 0 else 0
-                
-                # Determine trend
-                ma_20 = index_data['Close'].rolling(window=20).mean().iloc[-1] if len(index_data) >= 20 else current_price
-                ma_50 = index_data['Close'].rolling(window=50).mean().iloc[-1] if len(index_data) >= 50 else current_price
-                trend = "Bullish" if current_price > ma_20 and current_price > ma_50 else "Bearish"
-                
-                # Create chart
-                fig = go.Figure()
-                fig.add_trace(go.Candlestick(
-                    x=index_data.index,
-                    open=index_data['Open'],
-                    high=index_data['High'],
-                    low=index_data['Low'],
-                    close=index_data['Close'],
-                    name=index_name
+            fig_index.update_layout(
+                title=f'{selected_index} Price Movement',
+                xaxis_title='Date',
+                yaxis_title='Price',
+                template='plotly_dark',
+                height=500
+            )
+            st.plotly_chart(fig_index, use_container_width=True)
+            
+            # Add technical analysis for the index
+            st.subheader("Technical Analysis")
+            selected_index_data = calculate_technical_indicators(selected_index_data)
+            
+            if 'RSI' in selected_index_data.columns:
+                fig_rsi = go.Figure()
+                fig_rsi.add_trace(go.Scatter(
+                    x=selected_index_data.index,
+                    y=selected_index_data['RSI'],
+                    mode='lines',
+                    name='RSI'
                 ))
                 
-                # Add moving averages
-                if len(index_data) >= 20:
-                    fig.add_trace(go.Scatter(
-                        x=index_data.index,
-                        y=index_data['Close'].rolling(window=20).mean(),
-                        mode='lines',
-                        name='20-day MA',
-                        line=dict(color='orange', width=2)
-                    ))
+                # Add overbought/oversold lines
+                fig_rsi.add_hline(y=70, line_dash="dash", line_color="red")
+                fig_rsi.add_hline(y=30, line_dash="dash", line_color="green")
                 
-                if len(index_data) >= 50:
-                    fig.add_trace(go.Scatter(
-                        x=index_data.index,
-                        y=index_data['Close'].rolling(window=50).mean(),
-                        mode='lines',
-                        name='50-day MA',
-                        line=dict(color='purple', width=2)
-                    ))
-                
-                fig.update_layout(
-                    title=f'{index_name} Price Chart',
+                fig_rsi.update_layout(
+                    title='RSI Indicator',
                     xaxis_title='Date',
-                    yaxis_title='Price',
+                    yaxis_title='RSI',
                     template='plotly_dark',
-                    height=400
+                    height=300
                 )
-                
-                # Display metrics and chart
-                col1, col2 = st.columns([1, 2])
-                with col1:
-                    trend_color = "#00c853" if trend == "Bullish" else "#ff5252"
-                    st.markdown(f"""
-                    <div class="metric-card">
-                        <h3>{index_name}</h3>
-                        <h2>{current_price:.2f}</h2>
-                        <p style="color:{'green' if change >= 0 else 'red'};">{change:.2f}%</p>
-                        <p>Trend: <span style="color:{trend_color};">{trend}</span></p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                with col2:
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                st.markdown("---")
-        
-        # Overall market commentary
-        st.markdown('<div class="subheader">📈 Market Commentary</div>', unsafe_allow_html=True)
-        
-        # Generate market commentary based on sentiment
-        if market_sentiment == "Bullish":
-            commentary = """
-            <div class="feature-card">
-                <h4>🐂 Bullish Market Conditions</h4>
-                <p>The Indian market is showing strong bullish signals with most indices trading above their key moving averages. 
-                This indicates positive investor sentiment and potential for continued growth.</p>
-                <ul>
-                    <li>Consider increasing exposure to growth stocks</li>
-                    <li>Monitor for overbought conditions in the short term</li>
-                    <li>Look for sectors showing relative strength</li>
-                </ul>
-            </div>
-            """
-        elif market_sentiment == "Bearish":
-            commentary = """
-            <div class="feature-card">
-                <h4>🐻 Bearish Market Conditions</h4>
-                <p>The Indian market is showing bearish tendencies with indices trading below key moving averages. 
-                This suggests caution and potential defensive positioning.</p>
-                <ul>
-                    <li>Consider reducing exposure to high-beta stocks</li>
-                    <li>Focus on defensive sectors and quality companies</li>
-                    <li>Maintain adequate cash reserves for opportunities</li>
-                </ul>
-            </div>
-            """
+                st.plotly_chart(fig_rsi, use_container_width=True)
+            
+            # Market commentary
+            st.subheader("Market Commentary")
+            
+            # Simple commentary based on index performance
+            if selected_index_data['Close'].iloc[-1] > selected_index_data['Close'].iloc[0]:
+                commentary = f"The {selected_index} has shown positive performance over the selected period, indicating overall market strength. This bullish trend suggests investor confidence in the underlying components of the index."
+            else:
+                commentary = f"The {selected_index} has experienced a decline over the selected period, reflecting market uncertainty or negative sentiment. Investors should monitor key support levels for potential reversal signals."
+            
+            st.info(commentary)
+            
+            # Sector performance (simulated)
+            st.subheader("Sector Performance")
+            sectors = ["Banking", "IT", "Pharma", "Auto", "FMCG", "Energy"]
+            performance = np.random.uniform(-5, 5, len(sectors))
+            
+            fig_sector = go.Figure(go.Bar(
+                x=sectors,
+                y=performance,
+                marker_color=np.where(performance >= 0, 'green', 'red')
+            ))
+            fig_sector.update_layout(
+                title='Sector Performance (Simulated)',
+                xaxis_title='Sector',
+                yaxis_title='Performance (%)',
+                template='plotly_dark'
+            )
+            st.plotly_chart(fig_sector, use_container_width=True)
         else:
-            commentary = """
-            <div class="feature-card">
-                <h4>⚖️ Neutral Market Conditions</h4>
-                <p>The Indian market is in a neutral phase with mixed signals across different indices. 
-                This suggests a period of consolidation or indecision among investors.</p>
-                <ul>
-                    <li>Maintain a balanced portfolio approach</li>
-                    <li>Look for sector rotation opportunities</li>
-                    <li>Wait for clearer directional signals before making major changes</li>
-                </ul>
-            </div>
-            """
-        
-        st.markdown(commentary, unsafe_allow_html=True)
+            st.warning(f"Could not fetch historical data for {selected_index}")
 
-
-# Run the app
 if __name__ == "__main__":
     main()
