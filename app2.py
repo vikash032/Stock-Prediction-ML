@@ -2311,7 +2311,14 @@ def main():
             </ul>
         </div>
         """, unsafe_allow_html=True)
-        
+
+        # Define variable 
+        market_phase = "Bull market" if sentiment_value > 60 else "Bear market" if sentiment_value < 40 else "Neutral market"
+        recommended_strategy = "Growth focus" if sentiment_value > 60 else "Defensive positioning" if sentiment_value < 40 else "Balanced approach"
+        key_opportunity = "Technology sector" if np.random.random() > 0.5 else "Emerging markets"
+        key_risk = "Interest rate hikes" if np.random.random() > 0.5 else "Geopolitical tensions"
+        portfolio_action = "Rebalance towards value stocks" if np.random.random() > 0.5 else "Increase cash position"
+
         # Market Insights
         st.subheader("Market Insights")
         st.markdown(f"""
@@ -2319,11 +2326,11 @@ def main():
             <h4>Current Market Conditions</h4>
             <p>Our analysis of macroeconomic factors and market sentiment indicates:</p>
             <ul>
-                <li><b>Market Phase:</b> {'Bull market' if sentiment_value > 60 else 'Bear market' if sentiment_value < 40 else 'Neutral market'}</li>
-                <li><b>Recommended Strategy:</b> {'Growth focus' if sentiment_value > 60 else 'Defensive positioning' if sentiment_value < 40 else 'Balanced approach'}</li>
-                <li><b>Key Opportunity:</b> {'Technology sector' if np.random.random() > 0.5 else 'Emerging markets'}</li>
-                <li><b>Key Risk:</b> {'Interest rate hikes' if np.random.random() > 0.5 else 'Geopolitical tensions'}</li>
-                <li><b>Portfolio Action:</b> {'Rebalance towards value stocks' if np.random.random() > 0.5 else 'Increase cash position'}</li>
+                <li><b>Market Phase:</b> {market_phase}</li>
+                <li><b>Recommended Strategy:</b> {recommended_strategy}</li>
+                <li><b>Key Opportunity:</b> {key_opportunity}</li>
+                <li><b>Key Risk:</b> {key_risk}</li>
+                <li><b>Portfolio Action:</b> {portfolio_action}</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
