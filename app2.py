@@ -2613,16 +2613,14 @@ def main():
                         
         if market_news:    
             for news in market_news[:5]:  # Show top 5 news
-                st.markdown(
-                    f"""
-<div class="news-item">
-    <b>{news['title']}</b><br>
-    <i>{news.get('source', 'Unknown')} - {news.get('date', '')[:10]}</i><br>
-    <a href="{news['link']}" target="_blank">Read more</a>
-</div>
-""",
-                    unsafe_allow_html=True
+                html = (
+                    '<div class="news-item">'
+                    f"<b>{news['title']}</b><br>"
+                    f"<i>{news.get('source', 'Unknown')} - {news.get('date', '')[:10]}</i><br>"
+                    f"<a href=\"{news['link']}\" target=\"_blank\">Read more</a>"
+                    '</div>'
                 )
+                st.markdown(html, unsafe_allow_html=True)
         else:
             st.info("No market news available at the moment")
 
