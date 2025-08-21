@@ -1771,7 +1771,7 @@ def main():
                 with col2:
                     st.markdown("#### Put Option Payoff")
                     strike_put = st.slider("Strike Price (Put)", current_price * 0.8, current_price * 1.2, current_price * 0.95)
-                    premium_put = st.s极ider("Premium (Put)", 0.5, 20.0, 2.0)
+                    premium_put = st.slider("Premium (Put)", 0.5, 20.0, 2.0)
                     
                     prices, payoff_put = create_options_payoff(strike_put, premium_put, 'put', contracts)
                     fig_put = go.Figure()
