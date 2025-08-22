@@ -3694,16 +3694,6 @@ def main():
             
             col_risk1, col_risk2, col_risk3, col_risk4 = st.columns(4)
             col_risk1.metric("VaR (95%)", f"{risk_metrics['var_95']:.2%}")
-            
-            # Safely get CVaR value
-            cvar_95 = risk_metrics.get("cvar_95")
-
-            # Display metric with fallback
-            if cvar_95 is not None:
-                col_risk2.metric("CVaR (95%)", f"{cvar_95:.2%}")
-            else:
-                col_risk2.metric("CVaR (95%)", "N/A")
-                
             col_risk2.metric("CVaR (95%)", f"{risk_metrics['cvar_95']:.2%}")
             col_risk3.metric("Max Drawdown", f"{risk_metrics['max_drawdown']:.2%}")
             col_risk4.metric("Calmar Ratio", f"{risk_metrics['calmar_ratio']:.2f}")
