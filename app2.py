@@ -569,13 +569,23 @@ def validate_stock_data(data, min_days=30):
     return data
 
 # Module 1: Data Fetching - IMPROVED for better accuracy
-@st.cache_data(ttl=180, show_spinner=False, max_entries=50)  # Reduced TTL for more frequent updates
+@st.cache_data(ttl=180, show_spinner=False, max_entries=50)
 @handle_exceptions(fallback_value=pd.DataFrame(), user_message="Failed to fetch stock data. Please try again.")
 @monitor_performance(threshold_ms=2000)
 def get_stock_data(ticker, start, end):
     """Fetch stock data from Yahoo Finance with robust error handling"""
     try:
         quantum_logger.logger.info(f"Fetching data for {ticker} from {start} to {end}")
+        
+        # Validate dates - ensure they're not in the future
+        today = datetime.now().date()
+        if start > today:
+            start = today - timedelta(days=365)  # Default to 1 year ago if start is in future
+            st.warning(f"Start date was in the future. Adjusted to {start}")
+        
+        if end > today:
+            end = today  # Set end to today if it's in the future
+            st.warning(f"End date was in the future. Adjusted to {end}")
         
         # Check cache first
         cache_key = smart_cache._generate_key('get_stock_data', (ticker, start, end), {})
@@ -612,7 +622,7 @@ def get_stock_data(ticker, start, end):
         # Validate data structure
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
         for col in required_columns:
-            if col not in data.columns:
+            if col not极 data.columns:
                 raise ValueError(f"Missing required column: {col}")
         
         # Validate data quality
