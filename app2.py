@@ -3302,7 +3302,7 @@ def main():
                     
                     prices, payoff = create_options_payoff(strike, premium, 'call', contracts)
                     fig_call = go.Figure()
-                    fig_call.add_race(go.Scatter(x=prices, y=payoff, mode='lines', name='Call Payoff'))
+                    fig_call.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Call Payoff'))
                     fig_call.update_layout(
                         title='Call Option Payoff Diagram',
                         xaxis_title='Stock Price',
