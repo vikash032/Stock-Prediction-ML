@@ -54,8 +54,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Auto-refresh every 30 second
-st_autorefresh(interval=12000, key="data_refresh")
+# Auto-refresh every 2 mins
+st_autorefresh(interval=1200000, key="data_refresh")
 
 # Indian market indices with their Yahoo Finance symbols
 INDIAN_INDICES = {
