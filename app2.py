@@ -622,7 +622,7 @@ def get_stock_data(ticker, start, end):
         # Validate data structure
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
         for col in required_columns:
-            if col not极 data.columns:
+            if col not in data.columns:
                 raise ValueError(f"Missing required column: {col}")
         
         # Validate data quality
