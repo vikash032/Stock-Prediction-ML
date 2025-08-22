@@ -568,7 +568,8 @@ def validate_stock_data(data, min_days=30):
     
     return data
 
-# Module 1: Data Fetching @st.cache_data(ttl=180, show_spinner=False, max_entries=50)
+# Module 1: Data Fetching
+@st.cache_data(ttl=180, show_spinner=False, max_entries=50)
 @handle_exceptions(fallback_value=pd.DataFrame(), user_message="Failed to fetch stock data. Please try again.")
 @monitor_performance(threshold_ms=2000)
 def get_stock_data(ticker, start, end):
