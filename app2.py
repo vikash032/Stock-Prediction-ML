@@ -124,7 +124,11 @@ def handle_exceptions(fallback_value=None, user_message=None):
                     'traceback': traceback.format_exc()
                 }
                 
-                quantum_logger.logger.error(f"Exception in {func.__name__}", extra=error_details)
+                # ✅ wrap inside safe key to avoid reserved LogRecord keys
+                quantum_logger.logger.error(
+                    f"Exception in {func.__name__}",
+                    extra={"error_context": error_details}
+                )
                 
                 # User-friendly message
                 if user_message:
@@ -137,6 +141,7 @@ def handle_exceptions(fallback_value=None, user_message=None):
         
         return wrapper
     return decorator
+
 
 # Data validation utilities
 class DataValidator:
