@@ -743,7 +743,7 @@ def get_stock_data(ticker, start, end):
                 data.index = pd.to_datetime(data.index)
                 
                 # Filter to requested date range
-                mask = (data.index.date >= start) & (data.index.date <= end)
+                mask = (data.index >= start_date) & (data.index <= end_date)
                 filtered_data = data.loc[mask]
                 
                 # Use filtered data if it has enough points, otherwise use all data
