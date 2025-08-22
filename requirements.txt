@@ -16,6 +16,11 @@ tf-keras
 requests
 ta
 python-dotenv
+holidays
+sentry_sdk
+psutil
+websocket
+xgboost
 shap
 optuna
 redis
