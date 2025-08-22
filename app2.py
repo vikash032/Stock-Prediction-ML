@@ -575,252 +575,536 @@ import streamlit as st
 from datetime import datetime, timedelta
 import time
 import warnings
+import numpy as np
+from typing import Union, Optional
 warnings.filterwarnings('ignore')
 
+# =============================================================================
+# MAIN STOCK DATA FETCHER
+# =============================================================================
+
 @st.cache_data(ttl=180, show_spinner=False, max_entries=50)
-def get_stock_data(ticker, start, end):
-    """Fetch stock data from Yahoo Finance with robust error handling and multiple fallbacks"""
+def get_stock_data(ticker: str, start: Union[datetime, str], end: Union[datetime, str]) -> pd.DataFrame:
+    """
+    Fetch stock data from Yahoo Finance with comprehensive error handling
     
-    def log_info(message):
-        """Simple logging replacement"""
-        print(f"INFO: {message}")
+    Args:
+        ticker (str): Stock ticker symbol (e.g., 'AAPL', 'NTPC.NS')
+        start (datetime/str): Start date
+        end (datetime/str): End date
     
-    def log_error(message):
-        """Simple logging replacement"""
-        print(f"ERROR: {message}")
+    Returns:
+        pd.DataFrame: Stock data with OHLCV columns
+    """
+    
+    def log_info(message: str):
+        """Enhanced logging with timestamp"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] INFO: {message}")
+    
+    def log_error(message: str):
+        """Enhanced error logging with timestamp"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] ERROR: {message}")
+    
+    def log_warning(message: str):
+        """Enhanced warning logging"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] WARNING: {message}")
     
     try:
-        log_info(f"Fetching data for {ticker} from {start} to {end}")
+        log_info(f"Fetching stock data for {ticker} from {start} to {end}")
         
-        # Validate and adjust dates to ensure they're not in the future
+        # =============================================================================
+        # DATE VALIDATION AND NORMALIZATION
+        # =============================================================================
+        
         today = datetime.now().date()
         
-        # Convert start and end to datetime.date if they're not already
-        if isinstance(start, datetime):
+        # Convert start and end to datetime.date objects
+        if isinstance(start, str):
+            start = datetime.strptime(start, "%Y-%m-%d").date()
+        elif isinstance(start, datetime):
             start = start.date()
-        if isinstance(end, datetime):
+        
+        if isinstance(end, str):
+            end = datetime.strptime(end, "%Y-%m-%d").date()
+        elif isinstance(end, datetime):
             end = end.date()
         
-        # Adjust dates if they're in the future
+        # Validate and adjust dates
+        original_start, original_end = start, end
+        
         if start > today:
-            start = today - timedelta(days=365)  # Default to 1 year ago if start is in future
-            st.warning(f"Start date was in the future. Adjusted to {start}")
+            start = today - timedelta(days=365)
+            st.warning(f"⚠️ Start date was in future. Adjusted from {original_start} to {start}")
+            log_warning(f"Start date adjusted from {original_start} to {start}")
         
         if end > today:
-            end = today  # Set end to today if it's in the future
-            st.warning(f"End date was in the future. Adjusted to {end}")
+            end = today
+            st.warning(f"⚠️ End date was in future. Adjusted from {original_end} to {end}")
+            log_warning(f"End date adjusted from {original_end} to {end}")
         
-        # Ensure start is before end
         if start >= end:
-            start = end - timedelta(days=365)  # Set start to 1 year before end
-            st.warning(f"Start date was after end date. Adjusted to {start}")
+            start = end - timedelta(days=365)
+            st.warning(f"⚠️ Invalid date range. Adjusted start date to {start}")
+            log_warning(f"Date range corrected: start={start}, end={end}")
         
-        # Convert back to datetime for yfinance
+        # Convert to datetime objects for yfinance API
         start_dt = datetime.combine(start, datetime.min.time())
         end_dt = datetime.combine(end, datetime.min.time())
         
-        # List of ticker variations to try
-        ticker_variations = [ticker.upper()]
+        # =============================================================================
+        # TICKER SYMBOL VARIATIONS AND MARKET DETECTION
+        # =============================================================================
         
-        # Add variations for Indian stocks
-        if not any(suffix in ticker.upper() for suffix in ['.NS', '.BO']):
-            ticker_variations.extend([f"{ticker.upper()}.NS", f"{ticker.upper()}.BO"])
-        elif ticker.upper().endswith('.NS'):
-            base = ticker.upper().replace('.NS', '')
-            ticker_variations.extend([f"{base}.BO", base])
-        elif ticker.upper().endswith('.BO'):
-            base = ticker.upper().replace('.BO', '')
-            ticker_variations.extend([f"{base}.NS", base])
+        def generate_ticker_variations(ticker: str) -> list:
+            """Generate all possible ticker variations for different markets"""
+            variations = []
+            ticker_upper = ticker.upper().strip()
+            ticker_lower = ticker.lower().strip()
+            
+            # Add original ticker
+            variations.append(ticker_upper)
+            
+            # Indian market variations
+            if not ticker_upper.endswith(('.NS', '.BO')):
+                # Try NSE and BSE suffixes
+                variations.extend([f"{ticker_upper}.NS", f"{ticker_upper}.BO"])
+            elif ticker_upper.endswith('.NS'):
+                # Try BSE alternative and base symbol
+                base = ticker_upper.replace('.NS', '')
+                variations.extend([f"{base}.BO", base])
+            elif ticker_upper.endswith('.BO'):
+                # Try NSE alternative and base symbol  
+                base = ticker_upper.replace('.BO', '')
+                variations.extend([f"{base}.NS", base])
+            
+            # Add lowercase variations for some exchanges
+            variations.extend([ticker_lower, ticker_upper])
+            
+            # Remove duplicates while preserving order
+            return list(dict.fromkeys(variations))
         
-        # Add US market variations
-        ticker_variations.extend([ticker.upper(), ticker.lower()])
+        ticker_variations = generate_ticker_variations(ticker)
+        log_info(f"Generated ticker variations: {ticker_variations}")
         
-        # Remove duplicates while preserving order
-        ticker_variations = list(dict.fromkeys(ticker_variations))
+        # =============================================================================
+        # DATA FETCHING WITH MULTIPLE STRATEGIES
+        # =============================================================================
         
         data = pd.DataFrame()
         successful_ticker = None
+        fetch_method = None
         
-        # Try each ticker variation
+        # Strategy 1: Date range fetching
+        log_info("Strategy 1: Attempting date range fetching")
         for test_ticker in ticker_variations:
             try:
-                log_info(f"Trying ticker: {test_ticker}")
+                log_info(f"Trying date range fetch for: {test_ticker}")
                 
-                # Try with date range first
                 temp_data = yf.download(
-                    test_ticker, 
-                    start=start_dt - timedelta(days=5), 
-                    end=end_dt + timedelta(days=1), 
-                    progress=False, 
+                    test_ticker,
+                    start=start_dt - timedelta(days=7),  # Extra buffer
+                    end=end_dt + timedelta(days=1),
+                    progress=False,
                     auto_adjust=True,
-                    threads=False  # Disable threading to avoid issues
+                    threads=False,
+                    actions=False,  # Exclude dividends/splits for cleaner data
+                    group_by='ticker'
                 )
                 
-                # If no data with date range, try period-based approach
-                if temp_data.empty or len(temp_data) < 5:
-                    log_info(f"No data with date range for {test_ticker}, trying period-based")
-                    temp_data = yf.download(
-                        test_ticker, 
-                        period="1y", 
-                        progress=False, 
-                        auto_adjust=True,
-                        threads=False
-                    )
+                # Handle multi-level columns if present
+                if hasattr(temp_data.columns, 'levels'):
+                    temp_data = temp_data.droplevel(0, axis=1)
                 
-                if not temp_data.empty and len(temp_data) >= 5:
-                    data = temp_data
+                if temp_data is not None and not temp_data.empty and len(temp_data) >= 5:
+                    data = temp_data.copy()
                     successful_ticker = test_ticker
-                    log_info(f"Successfully fetched data for {test_ticker}")
+                    fetch_method = "date_range"
+                    log_info(f"✅ Date range fetch successful for {test_ticker}: {len(data)} rows")
                     break
                     
             except Exception as e:
-                log_error(f"Failed to fetch data for {test_ticker}: {str(e)}")
+                log_error(f"Date range fetch failed for {test_ticker}: {str(e)}")
                 continue
         
-        # If still no data, try alternative approaches
+        # Strategy 2: Period-based fetching if date range failed
         if data.empty:
-            log_info("Trying alternative data fetching methods")
+            log_info("Strategy 2: Attempting period-based fetching")
+            periods = ["1y", "2y", "6mo", "3mo"]
             
-            # Try with different periods
-            periods = ["1y", "2y", "5y", "max"]
             for period in periods:
-                try:
-                    for test_ticker in ticker_variations[:3]:  # Try top 3 variations
+                for test_ticker in ticker_variations:
+                    try:
+                        log_info(f"Trying period {period} for: {test_ticker}")
+                        
                         temp_data = yf.download(
-                            test_ticker, 
-                            period=period, 
-                            progress=False, 
+                            test_ticker,
+                            period=period,
+                            progress=False,
                             auto_adjust=True,
-                            threads=False
+                            threads=False,
+                            actions=False
                         )
                         
-                        if not temp_data.empty and len(temp_data) >= 10:
-                            data = temp_data
+                        # Handle multi-level columns
+                        if hasattr(temp_data.columns, 'levels'):
+                            temp_data = temp_data.droplevel(0, axis=1)
+                        
+                        if temp_data is not None and not temp_data.empty and len(temp_data) >= 10:
+                            data = temp_data.copy()
                             successful_ticker = test_ticker
-                            log_info(f"Got data with period {period} for {test_ticker}")
+                            fetch_method = f"period_{period}"
+                            log_info(f"✅ Period fetch successful for {test_ticker} ({period}): {len(data)} rows")
                             break
+                            
+                    except Exception as e:
+                        log_error(f"Period fetch failed for {test_ticker} ({period}): {str(e)}")
+                        continue
+                
+                if not data.empty:
+                    break
+        
+        # Strategy 3: Alternative data source attempts
+        if data.empty:
+            log_info("Strategy 3: Attempting alternative methods")
+            
+            # Try with different parameters
+            for test_ticker in ticker_variations[:2]:  # Try top 2 variations only
+                try:
+                    log_info(f"Alternative fetch for: {test_ticker}")
                     
-                    if not data.empty:
+                    # Try without auto_adjust
+                    temp_data = yf.download(
+                        test_ticker,
+                        period="1y",
+                        progress=False,
+                        auto_adjust=False,
+                        threads=False
+                    )
+                    
+                    if temp_data is not None and not temp_data.empty:
+                        data = temp_data.copy()
+                        successful_ticker = test_ticker
+                        fetch_method = "alternative"
+                        log_info(f"✅ Alternative fetch successful for {test_ticker}: {len(data)} rows")
                         break
                         
                 except Exception as e:
+                    log_error(f"Alternative fetch failed for {test_ticker}: {str(e)}")
                     continue
         
-        # Final validation
-        if data.empty:
-            error_msg = f"No data available for any variation of ticker '{ticker}'. Tried: {ticker_variations}"
-            log_error(error_msg)
-            st.error(f"❌ {error_msg}")
-            raise ValueError(error_msg)
+        # =============================================================================
+        # DATA VALIDATION AND CLEANING
+        # =============================================================================
         
-        # Validate data structure
+        if data.empty:
+            error_msg = f"❌ No data available for ticker '{ticker}' or any of its variations: {ticker_variations}"
+            log_error(error_msg)
+            st.error(error_msg)
+            return pd.DataFrame()
+        
+        log_info(f"Raw data received - Shape: {data.shape}, Columns: {list(data.columns)}")
+        
+        # Ensure required columns exist
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        available_columns = [col for col in required_columns if col in data.columns]
         missing_columns = [col for col in required_columns if col not in data.columns]
         
         if missing_columns:
-            error_msg = f"Missing required columns: {missing_columns}"
-            log_error(error_msg)
-            st.error(f"❌ {error_msg}")
-            raise ValueError(error_msg)
+            log_warning(f"Missing columns: {missing_columns}")
+            if 'Close' not in data.columns:
+                error_msg = f"❌ Critical: No 'Close' price data available for {ticker}"
+                log_error(error_msg)
+                st.error(error_msg)
+                return pd.DataFrame()
         
-        # Check for sufficient data
-        if len(data) < 10:
-            error_msg = f"Insufficient data points ({len(data)}). Need at least 10 data points."
+        # Basic data quality validation
+        if len(data) < 5:
+            error_msg = f"❌ Insufficient data: only {len(data)} rows available (minimum 5 required)"
             log_error(error_msg)
-            st.error(f"❌ {error_msg}")
-            raise ValueError(error_msg)
+            st.error(error_msg)
+            return pd.DataFrame()
         
-        # Basic data quality checks
-        if data['Close'].isnull().all():
-            error_msg = "All closing prices are null"
-            log_error(error_msg)
-            st.error(f"❌ {error_msg}")
-            raise ValueError(error_msg)
-        
-        # Filter data to requested date range if possible
+        # Check for valid closing prices
         try:
-            if len(data) > 0:
-                data.index = pd.to_datetime(data.index)
+            close_prices = data['Close'].dropna()
+            if len(close_prices) == 0:
+                error_msg = f"❌ No valid closing prices found for {ticker}"
+                log_error(error_msg)
+                st.error(error_msg)
+                return pd.DataFrame()
                 
-                # Filter to requested date range
-                mask = (data.index >= start_date) & (data.index <= end_date)
-                filtered_data = data.loc[mask]
+            if (close_prices <= 0).any():
+                log_warning("Found non-positive closing prices, filtering them out")
+                data = data[data['Close'] > 0]
                 
-                # Use filtered data if it has enough points, otherwise use all data
-                if len(filtered_data) >= 10:
-                    data = filtered_data
-                else:
-                    st.warning(f"Requested date range has insufficient data ({len(filtered_data)} points). Using available data ({len(data)} points).")
         except Exception as e:
-            log_error(f"Error filtering data by date range: {str(e)}")
-            # Continue with unfiltered data
+            log_error(f"Error validating closing prices: {str(e)}")
         
-        # Remove any rows with all NaN values
-        data = data.dropna(how='all')
+        # =============================================================================
+        # DATE FILTERING AND INDEX MANAGEMENT
+        # =============================================================================
         
-        # Forward fill and backward fill to handle missing values
-        data = data.fillna(method='ffill').fillna(method='bfill')
+        try:
+            # Ensure proper datetime index
+            if not isinstance(data.index, pd.DatetimeIndex):
+                data.index = pd.to_datetime(data.index)
+                log_info("Converted index to DatetimeIndex")
+            
+            # Remove timezone info for consistency
+            if data.index.tz is not None:
+                data.index = data.index.tz_localize(None)
+                log_info("Removed timezone information from index")
+            
+            # Filter to requested date range
+            start_ts = pd.Timestamp(start)
+            end_ts = pd.Timestamp(end)
+            
+            # Create boolean mask safely
+            mask = (data.index >= start_ts) & (data.index <= end_ts)
+            filtered_data = data[mask].copy()
+            
+            log_info(f"Date filtering: {len(filtered_data)} rows in range [{start} to {end}] out of {len(data)} total")
+            
+            # Use filtered data if sufficient, otherwise use all available data
+            if len(filtered_data) >= 10:
+                data = filtered_data
+                log_info(f"Using filtered data: {len(data)} rows")
+            else:
+                log_warning(f"Insufficient filtered data ({len(filtered_data)} rows), using all available data ({len(data)} rows)")
+                st.warning(f"⚠️ Limited data in date range. Using {len(data)} available data points.")
+                
+        except Exception as e:
+            log_error(f"Error during date filtering: {str(e)}")
+            log_info("Continuing with unfiltered data")
         
-        # Final check
+        # =============================================================================
+        # DATA CLEANING AND PREPROCESSING
+        # =============================================================================
+        
+        try:
+            # Remove rows where all values are NaN
+            initial_len = len(data)
+            data = data.dropna(how='all')
+            if len(data) < initial_len:
+                log_info(f"Removed {initial_len - len(data)} empty rows")
+            
+            # Handle missing values with forward/backward fill
+            if data.isnull().any().any():
+                log_info("Handling missing values with forward/backward fill")
+                
+                # Try modern pandas methods first
+                try:
+                    data = data.ffill().bfill()
+                except AttributeError:
+                    # Fallback for older pandas versions
+                    try:
+                        data = data.fillna(method='ffill').fillna(method='bfill')
+                    except Exception:
+                        # Last resort: interpolation
+                        data = data.interpolate(method='linear')
+                        log_warning("Used interpolation for missing values")
+            
+            # Remove any remaining rows with NaN in critical columns
+            critical_columns = ['Close']
+            before_clean = len(data)
+            data = data.dropna(subset=critical_columns)
+            if len(data) < before_clean:
+                log_info(f"Removed {before_clean - len(data)} rows with missing critical data")
+            
+        except Exception as e:
+            log_error(f"Error during data cleaning: {str(e)}")
+        
+        # =============================================================================
+        # FINAL VALIDATION
+        # =============================================================================
+        
         if data.empty or len(data) < 5:
-            error_msg = f"Insufficient valid data after cleaning. Final data points: {len(data)}"
+            error_msg = f"❌ Insufficient data after cleaning: {len(data)} rows (minimum 5 required)"
             log_error(error_msg)
-            st.error(f"❌ {error_msg}")
-            raise ValueError(error_msg)
+            st.error(error_msg)
+            return pd.DataFrame()
         
-        st.success(f"✅ Successfully loaded {len(data)} data points for {successful_ticker}")
-        log_info(f"Successfully processed data for {successful_ticker}. Shape: {data.shape}")
+        # Sort by date to ensure chronological order
+        data = data.sort_index()
+        
+        # Add metadata to the DataFrame
+        data.attrs['ticker'] = successful_ticker
+        data.attrs['fetch_method'] = fetch_method
+        data.attrs['data_range'] = f"{data.index.min().date()} to {data.index.max().date()}"
+        data.attrs['fetch_timestamp'] = datetime.now().isoformat()
+        
+        # Success message
+        success_msg = f"✅ Successfully loaded {len(data)} data points for {successful_ticker}"
+        st.success(success_msg)
+        log_info(f"DATA FETCH SUCCESSFUL - Ticker: {successful_ticker}, Method: {fetch_method}, Rows: {len(data)}, Date Range: {data.index.min().date()} to {data.index.max().date()}")
         
         return data
         
     except Exception as e:
-        error_msg = f"Failed to fetch stock data for {ticker}: {str(e)}"
+        error_msg = f"❌ Critical error fetching data for {ticker}: {str(e)}"
         log_error(error_msg)
-        st.error(f"❌ {error_msg}")
-        
-        # Return empty DataFrame instead of raising exception to prevent app crash
+        st.error(error_msg)
         return pd.DataFrame()
 
-# Alternative simple function without caching for testing
-def get_stock_data_simple(ticker, start=None, end=None):
-    """Simple stock data fetcher for debugging"""
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def get_stock_data_simple(ticker: str, period: str = "1y") -> pd.DataFrame:
+    """
+    Simple stock data fetcher for quick testing
+    
+    Args:
+        ticker (str): Stock ticker symbol
+        period (str): Period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
+    
+    Returns:
+        pd.DataFrame: Stock data
+    """
     try:
-        print(f"Fetching data for: {ticker}")
+        print(f"🔍 Simple fetch: {ticker} for period {period}")
         
-        # If no dates provided, use last 1 year
-        if start is None or end is None:
-            data = yf.download(ticker, period="1y", progress=False)
+        data = yf.download(
+            ticker, 
+            period=period, 
+            progress=False, 
+            auto_adjust=True,
+            threads=False
+        )
+        
+        if data is not None and not data.empty:
+            print(f"✅ Success: {len(data)} rows, Columns: {list(data.columns)}")
+            print(f"📅 Date range: {data.index.min().date()} to {data.index.max().date()}")
+            return data
         else:
-            data = yf.download(ticker, start=start, end=end, progress=False)
-        
-        print(f"Data shape: {data.shape}")
-        print(f"Data columns: {list(data.columns)}")
-        print(f"Data index range: {data.index.min()} to {data.index.max()}")
-        
-        return data
-        
+            print("❌ No data returned")
+            return pd.DataFrame()
+            
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"❌ Error: {str(e)}")
         return pd.DataFrame()
 
-# Test function
-def test_stock_data_fetch(ticker="AAPL"):
-    """Test function to debug data fetching"""
-    st.write(f"🔍 Testing data fetch for: {ticker}")
+def validate_ticker_format(ticker: str) -> dict:
+    """
+    Validate and suggest ticker format corrections
     
-    # Test 1: Simple fetch
-    st.write("Test 1: Simple fetch (1 year)")
-    data1 = get_stock_data_simple(ticker)
-    st.write(f"Result: {len(data1)} rows, Columns: {list(data1.columns) if not data1.empty else 'Empty'}")
+    Args:
+        ticker (str): Ticker symbol to validate
     
-    # Test 2: With date range
+    Returns:
+        dict: Validation results and suggestions
+    """
+    suggestions = []
+    ticker_upper = ticker.upper().strip()
+    
+    # Indian stock suggestions
+    if not ticker_upper.endswith(('.NS', '.BO')) and len(ticker_upper) <= 10:
+        suggestions.extend([f"{ticker_upper}.NS", f"{ticker_upper}.BO"])
+    
+    # US stock format
+    if len(ticker_upper) <= 5 and ticker_upper.isalpha():
+        suggestions.append(ticker_upper)
+    
+    return {
+        'original': ticker,
+        'formatted': ticker_upper,
+        'suggestions': list(set(suggestions)),
+        'is_likely_indian': not ticker_upper.endswith(('.NS', '.BO')) and len(ticker_upper) > 3,
+        'is_likely_us': len(ticker_upper) <= 5 and ticker_upper.isalpha()
+    }
+
+def test_stock_data_comprehensive(ticker: str = "NTPC.NS") -> pd.DataFrame:
+    """
+    Comprehensive test function with detailed diagnostics
+    
+    Args:
+        ticker (str): Ticker to test
+        
+    Returns:
+        pd.DataFrame: Test results
+    """
+    st.write(f"🧪 **Comprehensive Test for {ticker}**")
+    st.write("---")
+    
+    # Test 1: Ticker validation
+    st.write("**Step 1: Ticker Validation**")
+    validation = validate_ticker_format(ticker)
+    st.json(validation)
+    
+    # Test 2: Simple fetch
+    st.write("**Step 2: Simple Fetch Test**")
+    simple_data = get_stock_data_simple(ticker, "1y")
+    st.write(f"Result: {len(simple_data)} rows")
+    
+    if not simple_data.empty:
+        st.write("Sample data:")
+        st.dataframe(simple_data.head())
+    
+    # Test 3: Full fetch with date range
+    st.write("**Step 3: Full Fetch Test**")
     end_date = datetime.now().date()
     start_date = end_date - timedelta(days=365)
-    st.write(f"Test 2: Date range fetch ({start_date} to {end_date})")
-    data2 = get_stock_data(ticker, start_date, end_date)
-    st.write(f"Result: {len(data2)} rows, Columns: {list(data2.columns) if not data2.empty else 'Empty'}")
     
-    return data2 if not data2.empty else data1
+    full_data = get_stock_data(ticker, start_date, end_date)
+    st.write(f"Result: {len(full_data)} rows")
+    
+    if not full_data.empty:
+        st.write("Data info:")
+        st.json({
+            'shape': full_data.shape,
+            'columns': list(full_data.columns),
+            'date_range': f"{full_data.index.min().date()} to {full_data.index.max().date()}",
+            'null_values': full_data.isnull().sum().to_dict()
+        })
+        
+        # Show sample data
+        st.write("Sample data:")
+        st.dataframe(full_data.tail())
+    
+    return full_data if not full_data.empty else simple_data
+
+# =============================================================================
+# EMERGENCY FALLBACK FUNCTION
+# =============================================================================
+
+def get_stock_data_emergency(ticker: str) -> pd.DataFrame:
+    """
+    Emergency fallback function with maximum compatibility
+    
+    Args:
+        ticker (str): Stock ticker
+        
+    Returns:
+        pd.DataFrame: Stock data or empty DataFrame
+    """
+    try:
+        st.info(f"🚨 Using emergency fallback for {ticker}")
+        
+        # Try basic fetch
+        data = yf.download(ticker, period="1y", progress=False, threads=False)
+        
+        if data is not None and not data.empty:
+            st.success(f"✅ Emergency fetch successful: {len(data)} rows")
+            return data
+        
+        # Try with .NS suffix
+        if not ticker.endswith(('.NS', '.BO')):
+            ticker_ns = f"{ticker}.NS"
+            data = yf.download(ticker_ns, period="1y", progress=False, threads=False)
+            
+            if data is not None and not data.empty:
+                st.success(f"✅ Emergency fetch successful with .NS suffix: {len(data)} rows")
+                return data
+        
+        st.error(f"❌ Emergency fetch failed for {ticker}")
+        return pd.DataFrame()
+        
+    except Exception as e:
+        st.error(f"❌ Emergency fetch error: {str(e)}")
+        return pd.DataFrame()
 
 
 # New function to get index data and market sentiment
