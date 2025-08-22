@@ -3005,7 +3005,7 @@ def main():
             # Process in batches
             sentiments = []
             for i in range(0, len(all_texts), 8):
-                batch = all_textsi:i+8]
+                batch = all_texts[i:i+8]
                 try:
                     sentiments.extend(sentiment_model(batch))
                 except Exception as e:
