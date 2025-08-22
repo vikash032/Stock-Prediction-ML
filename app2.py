@@ -568,8 +568,7 @@ def validate_stock_data(data, min_days=30):
     
     return data
 
-# Module 1: Data Fetching - IMPROVED for better accuracy
-@st.cache_data(ttl=180, show_spinner=False, max_entries=50)
+# Module 1: Data Fetching @st.cache_data(ttl=180, show_spinner=False, max_entries=50)
 @handle_exceptions(fallback_value=pd.DataFrame(), user_message="Failed to fetch stock data. Please try again.")
 @monitor_performance(threshold_ms=2000)
 def get_stock_data(ticker, start, end):
@@ -577,8 +576,16 @@ def get_stock_data(ticker, start, end):
     try:
         quantum_logger.logger.info(f"Fetching data for {ticker} from {start} to {end}")
         
-        # Validate dates - ensure they're not in the future
+        # Validate and adjust dates to ensure they're not in the future
         today = datetime.now().date()
+        
+        # Convert start and end to datetime.date if they're not already
+        if isinstance(start, datetime):
+            start = start.date()
+        if isinstance(end, datetime):
+            end = end.date()
+        
+        # Adjust dates if they're in the future
         if start > today:
             start = today - timedelta(days=365)  # Default to 1 year ago if start is in future
             st.warning(f"Start date was in the future. Adjusted to {start}")
@@ -586,6 +593,11 @@ def get_stock_data(ticker, start, end):
         if end > today:
             end = today  # Set end to today if it's in the future
             st.warning(f"End date was in the future. Adjusted to {end}")
+        
+        # Ensure start is before end
+        if start >= end:
+            start = end - timedelta(days=365)  # Set start to 1 year before end
+            st.warning(f"Start date was after end date. Adjusted to {start}")
         
         # Check cache first
         cache_key = smart_cache._generate_key('get_stock_data', (ticker, start, end), {})
@@ -595,8 +607,12 @@ def get_stock_data(ticker, start, end):
             quantum_logger.logger.info(f"Cache hit for {ticker}")
             return cached_data
         
+        # Convert back to datetime for yfinance
+        start_dt = datetime.combine(start, datetime.min.time())
+        end_dt = datetime.combine(end, datetime.min.time())
+        
         # For Indian stocks, ensure we're using the correct symbol format
-        data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
+        data = yf.download(ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
                           progress=False, auto_adjust=True)
         
         if data.empty or len(data) < 10:
@@ -604,13 +620,13 @@ def get_stock_data(ticker, start, end):
             if ticker.endswith('.NS'):
                 # Try without NS suffix
                 alt_ticker = ticker.replace('.NS', '.BO')  # BSE
-                data = yf.download(alt_ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
+                data = yf.download(alt_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
                                   progress=False, auto_adjust=True)
             
             if data.empty:
                 # Try with just the symbol
                 base_ticker = ticker.replace('.NS', '').replace('.BO', '')
-                data = yf.download(base_ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
+                data = yf.download(base_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
                                   progress=False, auto_adjust=True)
         
         if data.empty:
@@ -655,13 +671,14 @@ def get_stock_data(ticker, start, end):
             f"Failed to fetch data for {ticker}",
             extra={
                 'ticker': ticker,
-                'start_date': start.isoformat(),
-                'end_date': end.isoformat(),
+                'start_date': start.isoformat() if hasattr(start, 'isoformat') else str(start),
+                'end_date': end.isoformat() if hasattr(end, 'isoformat') else str(end),
                 'error_type': type(e).__name__,
                 'error_message': str(e)
             }
         )
         raise
+
 
 # New function to get index data and market sentiment
 @st.cache_data(ttl=300, show_spinner=False)
