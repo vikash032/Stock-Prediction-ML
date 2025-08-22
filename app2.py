@@ -569,13 +569,28 @@ def validate_stock_data(data, min_days=30):
     return data
 
 # Module 1: Data Fetching
+import yfinance as yf
+import pandas as pd
+import streamlit as st
+from datetime import datetime, timedelta
+import time
+import warnings
+warnings.filterwarnings('ignore')
+
 @st.cache_data(ttl=180, show_spinner=False, max_entries=50)
-@handle_exceptions(fallback_value=pd.DataFrame(), user_message="Failed to fetch stock data. Please try again.")
-@monitor_performance(threshold_ms=2000)
 def get_stock_data(ticker, start, end):
-    """Fetch stock data from Yahoo Finance with robust error handling"""
+    """Fetch stock data from Yahoo Finance with robust error handling and multiple fallbacks"""
+    
+    def log_info(message):
+        """Simple logging replacement"""
+        print(f"INFO: {message}")
+    
+    def log_error(message):
+        """Simple logging replacement"""
+        print(f"ERROR: {message}")
+    
     try:
-        quantum_logger.logger.info(f"Fetching data for {ticker} from {start} to {end}")
+        log_info(f"Fetching data for {ticker} from {start} to {end}")
         
         # Validate and adjust dates to ensure they're not in the future
         today = datetime.now().date()
@@ -600,85 +615,212 @@ def get_stock_data(ticker, start, end):
             start = end - timedelta(days=365)  # Set start to 1 year before end
             st.warning(f"Start date was after end date. Adjusted to {start}")
         
-        # Check cache first
-        cache_key = smart_cache._generate_key('get_stock_data', (ticker, start, end), {})
-        cached_data = smart_cache.get(cache_key)
-        
-        if cached_data is not None:
-            quantum_logger.logger.info(f"Cache hit for {ticker}")
-            return cached_data
-        
         # Convert back to datetime for yfinance
         start_dt = datetime.combine(start, datetime.min.time())
         end_dt = datetime.combine(end, datetime.min.time())
         
-        # For Indian stocks, ensure we're using the correct symbol format
-        data = yf.download(ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
-                          progress=False, auto_adjust=True)
+        # List of ticker variations to try
+        ticker_variations = [ticker.upper()]
         
-        if data.empty or len(data) < 10:
-            # Try alternative data sources for Indian stocks
-            if ticker.endswith('.NS'):
-                # Try without NS suffix
-                alt_ticker = ticker.replace('.NS', '.BO')  # BSE
-                data = yf.download(alt_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
-                                  progress=False, auto_adjust=True)
-            
-            if data.empty:
-                # Try with just the symbol
-                base_ticker = ticker.replace('.NS', '').replace('.BO', '')
-                data = yf.download(base_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
-                                  progress=False, auto_adjust=True)
+        # Add variations for Indian stocks
+        if not any(suffix in ticker.upper() for suffix in ['.NS', '.BO']):
+            ticker_variations.extend([f"{ticker.upper()}.NS", f"{ticker.upper()}.BO"])
+        elif ticker.upper().endswith('.NS'):
+            base = ticker.upper().replace('.NS', '')
+            ticker_variations.extend([f"{base}.BO", base])
+        elif ticker.upper().endswith('.BO'):
+            base = ticker.upper().replace('.BO', '')
+            ticker_variations.extend([f"{base}.NS", base])
         
+        # Add US market variations
+        ticker_variations.extend([ticker.upper(), ticker.lower()])
+        
+        # Remove duplicates while preserving order
+        ticker_variations = list(dict.fromkeys(ticker_variations))
+        
+        data = pd.DataFrame()
+        successful_ticker = None
+        
+        # Try each ticker variation
+        for test_ticker in ticker_variations:
+            try:
+                log_info(f"Trying ticker: {test_ticker}")
+                
+                # Try with date range first
+                temp_data = yf.download(
+                    test_ticker, 
+                    start=start_dt - timedelta(days=5), 
+                    end=end_dt + timedelta(days=1), 
+                    progress=False, 
+                    auto_adjust=True,
+                    threads=False  # Disable threading to avoid issues
+                )
+                
+                # If no data with date range, try period-based approach
+                if temp_data.empty or len(temp_data) < 5:
+                    log_info(f"No data with date range for {test_ticker}, trying period-based")
+                    temp_data = yf.download(
+                        test_ticker, 
+                        period="1y", 
+                        progress=False, 
+                        auto_adjust=True,
+                        threads=False
+                    )
+                
+                if not temp_data.empty and len(temp_data) >= 5:
+                    data = temp_data
+                    successful_ticker = test_ticker
+                    log_info(f"Successfully fetched data for {test_ticker}")
+                    break
+                    
+            except Exception as e:
+                log_error(f"Failed to fetch data for {test_ticker}: {str(e)}")
+                continue
+        
+        # If still no data, try alternative approaches
         if data.empty:
-            quantum_logger.logger.warning(f"No data found for {ticker}, trying 1-year period")
-            data = yf.download(ticker, period="1y", auto_adjust=True)
-            if data.empty:
-                raise ValueError(f"No data available for {ticker}")
+            log_info("Trying alternative data fetching methods")
+            
+            # Try with different periods
+            periods = ["1y", "2y", "5y", "max"]
+            for period in periods:
+                try:
+                    for test_ticker in ticker_variations[:3]:  # Try top 3 variations
+                        temp_data = yf.download(
+                            test_ticker, 
+                            period=period, 
+                            progress=False, 
+                            auto_adjust=True,
+                            threads=False
+                        )
+                        
+                        if not temp_data.empty and len(temp_data) >= 10:
+                            data = temp_data
+                            successful_ticker = test_ticker
+                            log_info(f"Got data with period {period} for {test_ticker}")
+                            break
+                    
+                    if not data.empty:
+                        break
+                        
+                except Exception as e:
+                    continue
+        
+        # Final validation
+        if data.empty:
+            error_msg = f"No data available for any variation of ticker '{ticker}'. Tried: {ticker_variations}"
+            log_error(error_msg)
+            st.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         
         # Validate data structure
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        for col in required_columns:
-            if col not in data.columns:
-                raise ValueError(f"Missing required column: {col}")
+        missing_columns = [col for col in required_columns if col not in data.columns]
         
-        # Validate data quality
-        validation_result = DataValidator.validate_stock_data(data, ticker)
+        if missing_columns:
+            error_msg = f"Missing required columns: {missing_columns}"
+            log_error(error_msg)
+            st.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         
-        if not validation_result['is_valid']:
-            raise ValueError(f"Data validation failed: {validation_result['errors']}")
+        # Check for sufficient data
+        if len(data) < 10:
+            error_msg = f"Insufficient data points ({len(data)}). Need at least 10 data points."
+            log_error(error_msg)
+            st.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         
-        # Show warnings to user
-        for warning in validation_result['warnings']:
-            st.warning(warning)
+        # Basic data quality checks
+        if data['Close'].isnull().all():
+            error_msg = "All closing prices are null"
+            log_error(error_msg)
+            st.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         
-        # Cache successful result
-        smart_cache.set(cache_key, data, ttl=1800)  # 30 minutes
+        # Filter data to requested date range if possible
+        try:
+            if len(data) > 0:
+                data.index = pd.to_datetime(data.index)
+                
+                # Filter to requested date range
+                mask = (data.index.date >= start) & (data.index.date <= end)
+                filtered_data = data.loc[mask]
+                
+                # Use filtered data if it has enough points, otherwise use all data
+                if len(filtered_data) >= 10:
+                    data = filtered_data
+                else:
+                    st.warning(f"Requested date range has insufficient data ({len(filtered_data)} points). Using available data ({len(data)} points).")
+        except Exception as e:
+            log_error(f"Error filtering data by date range: {str(e)}")
+            # Continue with unfiltered data
         
-        quantum_logger.logger.info(
-            f"Successfully fetched data for {ticker}",
-            extra={
-                'ticker': ticker,
-                'data_points': len(data),
-                'quality_score': validation_result['data_quality_score']
-            }
-        )
+        # Remove any rows with all NaN values
+        data = data.dropna(how='all')
+        
+        # Forward fill and backward fill to handle missing values
+        data = data.fillna(method='ffill').fillna(method='bfill')
+        
+        # Final check
+        if data.empty or len(data) < 5:
+            error_msg = f"Insufficient valid data after cleaning. Final data points: {len(data)}"
+            log_error(error_msg)
+            st.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
+        
+        st.success(f"✅ Successfully loaded {len(data)} data points for {successful_ticker}")
+        log_info(f"Successfully processed data for {successful_ticker}. Shape: {data.shape}")
         
         return data
         
     except Exception as e:
-        # Log error with context
-        quantum_logger.logger.error(
-            f"Failed to fetch data for {ticker}",
-            extra={
-                'ticker': ticker,
-                'start_date': start.isoformat() if hasattr(start, 'isoformat') else str(start),
-                'end_date': end.isoformat() if hasattr(end, 'isoformat') else str(end),
-                'error_type': type(e).__name__,
-                'error_message': str(e)
-            }
-        )
-        raise
+        error_msg = f"Failed to fetch stock data for {ticker}: {str(e)}"
+        log_error(error_msg)
+        st.error(f"❌ {error_msg}")
+        
+        # Return empty DataFrame instead of raising exception to prevent app crash
+        return pd.DataFrame()
+
+# Alternative simple function without caching for testing
+def get_stock_data_simple(ticker, start=None, end=None):
+    """Simple stock data fetcher for debugging"""
+    try:
+        print(f"Fetching data for: {ticker}")
+        
+        # If no dates provided, use last 1 year
+        if start is None or end is None:
+            data = yf.download(ticker, period="1y", progress=False)
+        else:
+            data = yf.download(ticker, start=start, end=end, progress=False)
+        
+        print(f"Data shape: {data.shape}")
+        print(f"Data columns: {list(data.columns)}")
+        print(f"Data index range: {data.index.min()} to {data.index.max()}")
+        
+        return data
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return pd.DataFrame()
+
+# Test function
+def test_stock_data_fetch(ticker="AAPL"):
+    """Test function to debug data fetching"""
+    st.write(f"🔍 Testing data fetch for: {ticker}")
+    
+    # Test 1: Simple fetch
+    st.write("Test 1: Simple fetch (1 year)")
+    data1 = get_stock_data_simple(ticker)
+    st.write(f"Result: {len(data1)} rows, Columns: {list(data1.columns) if not data1.empty else 'Empty'}")
+    
+    # Test 2: With date range
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=365)
+    st.write(f"Test 2: Date range fetch ({start_date} to {end_date})")
+    data2 = get_stock_data(ticker, start_date, end_date)
+    st.write(f"Result: {len(data2)} rows, Columns: {list(data2.columns) if not data2.empty else 'Empty'}")
+    
+    return data2 if not data2.empty else data1
 
 
 # New function to get index data and market sentiment
