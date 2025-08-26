@@ -124,11 +124,7 @@ def handle_exceptions(fallback_value=None, user_message=None):
                     'traceback': traceback.format_exc()
                 }
                 
-                # ✅ wrap inside safe key to avoid reserved LogRecord keys
-                quantum_logger.logger.error(
-                    f"Exception in {func.__name__}",
-                    extra={"error_context": error_details}
-                )
+                quantum_logger.logger.error(f"Exception in {func.__name__}", extra=error_details)
                 
                 # User-friendly message
                 if user_message:
@@ -141,7 +137,6 @@ def handle_exceptions(fallback_value=None, user_message=None):
         
         return wrapper
     return decorator
-
 
 # Data validation utilities
 class DataValidator:
@@ -184,7 +179,7 @@ class DataValidator:
             if extreme_moves.any():
                 extreme_count = extreme_moves.sum()
                 validation_result['warnings'].append(
-                    f"{extreme_count} days with extreme price movements (>50%)"
+                    f"{extremecount} days with extreme price movements (>50%)"
                 )
                 validation_result['data_quality_score'] -= min(30, extreme_count * 5)
             
@@ -246,7 +241,7 @@ class RobustAPIClient:
         retry_strategy = Retry(
             total=max_retries,
             backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
+            status_forcelist=[429, 500, 502极 503, 504],
             method_whitelist=["HEAD", "GET", "OPTIONS"]
         )
         
@@ -299,7 +294,7 @@ class CircuitBreaker:
         self.failure_threshold = failure_threshold
         self.timeout = timeout
         self.failure_count = 0
-        self.last_failure_time = None
+极 self.last_failure_time = None
         self.state = 'CLOSED'  # CLOSED, OPEN, HALF_OPEN
     
     def call(self, func, *args, **kwargs):
@@ -317,7 +312,7 @@ class CircuitBreaker:
             return result
             
         except Exception as e:
-            self._on_failure()
+            self._极_failure()
             raise e
     
     def _should_attempt_reset(self) -> bool:
@@ -369,7 +364,7 @@ class SmartCache:
             'created': datetime.now()
         }
     
-    def invalidate_pattern(self, pattern: str) -> int:
+    def invalidate_pattern(self, pattern:极) -> int:
         """Invalidate cache entries matching pattern"""
         removed = 0
         keys_to_remove = []
@@ -465,7 +460,7 @@ class HealthChecker:
         if critical_failures > 0:
             results['overall_status'] = 'critical'
         elif any(check['status'] != 'healthy' for check in results['checks'].values()):
-            results['overall_status'] = 'degraded'
+            results['overall_status极 'degraded'
         
         return results
 
@@ -509,7 +504,7 @@ def monitor_performance(threshold_ms: int = 1000):
             # Log slow operations
             if duration_ms > threshold_ms:
                 quantum_logger.logger.warning(
-                    f"Slow operation detected: {func.__name__} took {duration_ms:.2f}ms",
+                    f"Slow operation detected: {func.__name__} took {duration_ms:.2f极ms",
                     extra={
                         'function': func.__name__,
                         'duration_ms': duration_ms,
@@ -568,544 +563,117 @@ def validate_stock_data(data, min_days=30):
     
     return data
 
-# Module 1: Data Fetching
-import yfinance as yf
-import pandas as pd
-import streamlit as st
-from datetime import datetime, timedelta
-import time
-import warnings
-import numpy as np
-from typing import Union, Optional
-warnings.filterwarnings('ignore')
-
-# =============================================================================
-# MAIN STOCK DATA FETCHER
-# =============================================================================
-
+# Module 1: Data Fetching - IMPROVED for better accuracy
 @st.cache_data(ttl=180, show_spinner=False, max_entries=50)
-def get_stock_data(ticker: str, start: Union[datetime, str], end: Union[datetime, str]) -> pd.DataFrame:
-    """
-    Fetch stock data from Yahoo Finance with comprehensive error handling
-    
-    Args:
-        ticker (str): Stock ticker symbol (e.g., 'AAPL', 'NTPC.NS')
-        start (datetime/str): Start date
-        end (datetime/str): End date
-    
-    Returns:
-        pd.DataFrame: Stock data with OHLCV columns
-    """
-    
-    def log_info(message: str):
-        """Enhanced logging with timestamp"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] INFO: {message}")
-    
-    def log_error(message: str):
-        """Enhanced error logging with timestamp"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] ERROR: {message}")
-    
-    def log_warning(message: str):
-        """Enhanced warning logging"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] WARNING: {message}")
-    
+@handle_exceptions(fallback_value=pd.DataFrame(), user_message="Failed to fetch stock data. Please try again.")
+@monitor_performance(threshold_ms=2000)
+def get_stock_data(ticker, start, end):
+    """Fetch stock data from Yahoo Finance with robust error handling"""
     try:
-        log_info(f"Fetching stock data for {ticker} from {start} to {end}")
+        quantum_logger.logger.info(f"Fetching data for {ticker} from {start} to {end}")
         
-        # =============================================================================
-        # DATE VALIDATION AND NORMALIZATION
-        # =============================================================================
-        
+        # Validate and adjust dates to ensure they're not in the future
         today = datetime.now().date()
         
-        # Convert start and end to datetime.date objects
-        if isinstance(start, str):
-            start = datetime.strptime(start, "%Y-%m-%d").date()
-        elif isinstance(start, datetime):
+        # Convert start and end to datetime.date if they're not already
+        if isinstance(start, datetime):
             start = start.date()
-        
-        if isinstance(end, str):
-            end = datetime.strptime(end, "%Y-%m-%d").date()
-        elif isinstance(end, datetime):
+        if isinstance(end, datetime):
             end = end.date()
         
-        # Validate and adjust dates
-        original_start, original_end = start, end
-        
+        # Adjust dates if they're in the future
         if start > today:
-            start = today - timedelta(days=365)
-            st.warning(f"⚠️ Start date was in future. Adjusted from {original_start} to {start}")
-            log_warning(f"Start date adjusted from {original_start} to {start}")
+            start = today - timedelta(days=365)  # Default to 1 year ago if start is in future
+            st.warning(f"Start date was in the future. Adjusted to {start}")
         
         if end > today:
-            end = today
-            st.warning(f"⚠️ End date was in future. Adjusted from {original_end} to {end}")
-            log_warning(f"End date adjusted from {original_end} to {end}")
+            end = today  # Set end to today if it's in the future
+            st.warning(f"End date was in the future. Adjusted to {end}")
         
+        # Ensure start is before end
         if start >= end:
-            start = end - timedelta(days=365)
-            st.warning(f"⚠️ Invalid date range. Adjusted start date to {start}")
-            log_warning(f"Date range corrected: start={start}, end={end}")
+            start = end - timedelta(days=365)  # Set start to 1 year before end
+            st.warning(f"Start date was after end date. Adjusted to {start}")
         
-        # Convert to datetime objects for yfinance API
+        # Check cache first
+        cache_key = smart_cache._generate_key('get_stock_data', (ticker, start, end), {})
+        cached_data = smart_cache.get(cache_key)
+        
+        if cached_data is not None:
+            quantum_logger.logger.info(f"Cache hit for {ticker}")
+            return cached_data
+        
+        # Convert back to datetime for yfinance
         start_dt = datetime.combine(start, datetime.min.time())
         end_dt = datetime.combine(end, datetime.min.time())
         
-        # =============================================================================
-        # TICKER SYMBOL VARIATIONS AND MARKET DETECTION
-        # =============================================================================
+        # For Indian stocks, ensure we're using the correct symbol format
+        data = yf.download(ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
+                          progress=False, auto_adjust=True)
         
-        def generate_ticker_variations(ticker: str) -> list:
-            """Generate all possible ticker variations for different markets"""
-            variations = []
-            ticker_upper = ticker.upper().strip()
-            ticker_lower = ticker.lower().strip()
+        if data.empty or len(data) < 10:
+            # Try alternative data sources for Indian stocks
+            if ticker.endswith('.NS'):
+                # Try without NS suffix
+                alt_ticker = ticker.replace('.NS', '.BO')  # BSE
+                data = yf.download(alt_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
+                                  progress=False, auto_adjust=True)
             
-            # Add original ticker
-            variations.append(ticker_upper)
-            
-            # Indian market variations
-            if not ticker_upper.endswith(('.NS', '.BO')):
-                # Try NSE and BSE suffixes
-                variations.extend([f"{ticker_upper}.NS", f"{ticker_upper}.BO"])
-            elif ticker_upper.endswith('.NS'):
-                # Try BSE alternative and base symbol
-                base = ticker_upper.replace('.NS', '')
-                variations.extend([f"{base}.BO", base])
-            elif ticker_upper.endswith('.BO'):
-                # Try NSE alternative and base symbol  
-                base = ticker_upper.replace('.BO', '')
-                variations.extend([f"{base}.NS", base])
-            
-            # Add lowercase variations for some exchanges
-            variations.extend([ticker_lower, ticker_upper])
-            
-            # Remove duplicates while preserving order
-            return list(dict.fromkeys(variations))
-        
-        ticker_variations = generate_ticker_variations(ticker)
-        log_info(f"Generated ticker variations: {ticker_variations}")
-        
-        # =============================================================================
-        # DATA FETCHING WITH MULTIPLE STRATEGIES
-        # =============================================================================
-        
-        data = pd.DataFrame()
-        successful_ticker = None
-        fetch_method = None
-        
-        # Strategy 1: Date range fetching
-        log_info("Strategy 1: Attempting date range fetching")
-        for test_ticker in ticker_variations:
-            try:
-                log_info(f"Trying date range fetch for: {test_ticker}")
-                
-                temp_data = yf.download(
-                    test_ticker,
-                    start=start_dt - timedelta(days=7),  # Extra buffer
-                    end=end_dt + timedelta(days=1),
-                    progress=False,
-                    auto_adjust=True,
-                    threads=False,
-                    actions=False,  # Exclude dividends/splits for cleaner data
-                    group_by='ticker'
-                )
-                
-                # Handle multi-level columns if present
-                if hasattr(temp_data.columns, 'levels'):
-                    temp_data = temp_data.droplevel(0, axis=1)
-                
-                if temp_data is not None and not temp_data.empty and len(temp_data) >= 5:
-                    data = temp_data.copy()
-                    successful_ticker = test_ticker
-                    fetch_method = "date_range"
-                    log_info(f"✅ Date range fetch successful for {test_ticker}: {len(data)} rows")
-                    break
-                    
-            except Exception as e:
-                log_error(f"Date range fetch failed for {test_ticker}: {str(e)}")
-                continue
-        
-        # Strategy 2: Period-based fetching if date range failed
-        if data.empty:
-            log_info("Strategy 2: Attempting period-based fetching")
-            periods = ["1y", "2y", "6mo", "3mo"]
-            
-            for period in periods:
-                for test_ticker in ticker_variations:
-                    try:
-                        log_info(f"Trying period {period} for: {test_ticker}")
-                        
-                        temp_data = yf.download(
-                            test_ticker,
-                            period=period,
-                            progress=False,
-                            auto_adjust=True,
-                            threads=False,
-                            actions=False
-                        )
-                        
-                        # Handle multi-level columns
-                        if hasattr(temp_data.columns, 'levels'):
-                            temp_data = temp_data.droplevel(0, axis=1)
-                        
-                        if temp_data is not None and not temp_data.empty and len(temp_data) >= 10:
-                            data = temp_data.copy()
-                            successful_ticker = test_ticker
-                            fetch_method = f"period_{period}"
-                            log_info(f"✅ Period fetch successful for {test_ticker} ({period}): {len(data)} rows")
-                            break
-                            
-                    except Exception as e:
-                        log_error(f"Period fetch failed for {test_ticker} ({period}): {str(e)}")
-                        continue
-                
-                if not data.empty:
-                    break
-        
-        # Strategy 3: Alternative data source attempts
-        if data.empty:
-            log_info("Strategy 3: Attempting alternative methods")
-            
-            # Try with different parameters
-            for test_ticker in ticker_variations[:2]:  # Try top 2 variations only
-                try:
-                    log_info(f"Alternative fetch for: {test_ticker}")
-                    
-                    # Try without auto_adjust
-                    temp_data = yf.download(
-                        test_ticker,
-                        period="1y",
-                        progress=False,
-                        auto_adjust=False,
-                        threads=False
-                    )
-                    
-                    if temp_data is not None and not temp_data.empty:
-                        data = temp_data.copy()
-                        successful_ticker = test_ticker
-                        fetch_method = "alternative"
-                        log_info(f"✅ Alternative fetch successful for {test_ticker}: {len(data)} rows")
-                        break
-                        
-                except Exception as e:
-                    log_error(f"Alternative fetch failed for {test_ticker}: {str(e)}")
-                    continue
-        
-        # =============================================================================
-        # DATA VALIDATION AND CLEANING
-        # =============================================================================
+            if data.empty:
+                # Try with just the symbol
+                base_ticker = ticker.replace('.NS', '').replace('.BO', '')
+                data = yf.download(base_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=极), 
+                                  progress=False, auto_adjust=True)
         
         if data.empty:
-            error_msg = f"❌ No data available for ticker '{ticker}' or any of its variations: {ticker_variations}"
-            log_error(error_msg)
-            st.error(error_msg)
-            return pd.DataFrame()
+            quantum_logger.logger.warning(f"No data found for {ticker}, trying 1-year period")
+            data = yf.download(ticker, period="1y", auto_adjust=True)
+            if data.empty:
+                raise ValueError(f"No data available for {ticker}")
         
-        log_info(f"Raw data received - Shape: {data.shape}, Columns: {list(data.columns)}")
-        
-        # Ensure required columns exist
+        # Validate data structure
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        available_columns = [col for col in required_columns if col in data.columns]
-        missing_columns = [col for col in required_columns if col not in data.columns]
+        for col in required_columns:
+            if col not in data.columns:
+                raise ValueError(f"Missing required column: {col}")
         
-        if missing_columns:
-            log_warning(f"Missing columns: {missing_columns}")
-            if 'Close' not in data.columns:
-                error_msg = f"❌ Critical: No 'Close' price data available for {ticker}"
-                log_error(error_msg)
-                st.error(error_msg)
-                return pd.DataFrame()
+        # Validate data quality
+        validation_result = DataValidator.validate_stock_data(data, ticker)
         
-        # Basic data quality validation
-        if len(data) < 5:
-            error_msg = f"❌ Insufficient data: only {len(data)} rows available (minimum 5 required)"
-            log_error(error_msg)
-            st.error(error_msg)
-            return pd.DataFrame()
+        if not validation_result['is_valid']:
+            raise ValueError(f极Data validation failed: {validation_result['errors']}")
         
-        # Check for valid closing prices
-        try:
-            close_prices = data['Close'].dropna()
-            if len(close_prices) == 0:
-                error_msg = f"❌ No valid closing prices found for {ticker}"
-                log_error(error_msg)
-                st.error(error_msg)
-                return pd.DataFrame()
-                
-            if (close_prices <= 0).any():
-                log_warning("Found non-positive closing prices, filtering them out")
-                data = data[data['Close'] > 0]
-                
-        except Exception as e:
-            log_error(f"Error validating closing prices: {str(e)}")
+        # Show warnings to user
+        for warning in validation_result['warnings']:
+            st.warning(warning)
         
-        # =============================================================================
-        # DATE FILTERING AND INDEX MANAGEMENT
-        # =============================================================================
+极 Cache successful result
+        smart_cache.set(cache_key, data, ttl=1800)  # 30 minutes
         
-        try:
-            # Ensure proper datetime index
-            if not isinstance(data.index, pd.DatetimeIndex):
-                data.index = pd.to_datetime(data.index)
-                log_info("Converted index to DatetimeIndex")
-            
-            # Remove timezone info for consistency
-            if data.index.tz is not None:
-                data.index = data.index.tz_localize(None)
-                log_info("Removed timezone information from index")
-            
-            # Filter to requested date range
-            start_ts = pd.Timestamp(start)
-            end_ts = pd.Timestamp(end)
-            
-            # Create boolean mask safely
-            mask = (data.index >= start_ts) & (data.index <= end_ts)
-            filtered_data = data[mask].copy()
-            
-            log_info(f"Date filtering: {len(filtered_data)} rows in range [{start} to {end}] out of {len(data)} total")
-            
-            # Use filtered data if sufficient, otherwise use all available data
-            if len(filtered_data) >= 10:
-                data = filtered_data
-                log_info(f"Using filtered data: {len(data)} rows")
-            else:
-                log_warning(f"Insufficient filtered data ({len(filtered_data)} rows), using all available data ({len(data)} rows)")
-                st.warning(f"⚠️ Limited data in date range. Using {len(data)} available data points.")
-                
-        except Exception as e:
-            log_error(f"Error during date filtering: {str(e)}")
-            log_info("Continuing with unfiltered data")
-        
-        # =============================================================================
-        # DATA CLEANING AND PREPROCESSING
-        # =============================================================================
-        
-        try:
-            # Remove rows where all values are NaN
-            initial_len = len(data)
-            data = data.dropna(how='all')
-            if len(data) < initial_len:
-                log_info(f"Removed {initial_len - len(data)} empty rows")
-            
-            # Handle missing values with forward/backward fill
-            if data.isnull().any().any():
-                log_info("Handling missing values with forward/backward fill")
-                
-                # Try modern pandas methods first
-                try:
-                    data = data.ffill().bfill()
-                except AttributeError:
-                    # Fallback for older pandas versions
-                    try:
-                        data = data.fillna(method='ffill').fillna(method='bfill')
-                    except Exception:
-                        # Last resort: interpolation
-                        data = data.interpolate(method='linear')
-                        log_warning("Used interpolation for missing values")
-            
-            # Remove any remaining rows with NaN in critical columns
-            critical_columns = ['Close']
-            before_clean = len(data)
-            data = data.dropna(subset=critical_columns)
-            if len(data) < before_clean:
-                log_info(f"Removed {before_clean - len(data)} rows with missing critical data")
-            
-        except Exception as e:
-            log_error(f"Error during data cleaning: {str(e)}")
-        
-        # =============================================================================
-        # FINAL VALIDATION
-        # =============================================================================
-        
-        if data.empty or len(data) < 5:
-            error_msg = f"❌ Insufficient data after cleaning: {len(data)} rows (minimum 5 required)"
-            log_error(error_msg)
-            st.error(error_msg)
-            return pd.DataFrame()
-        
-        # Sort by date to ensure chronological order
-        data = data.sort_index()
-        
-        # Add metadata to the DataFrame
-        data.attrs['ticker'] = successful_ticker
-        data.attrs['fetch_method'] = fetch_method
-        data.attrs['data_range'] = f"{data.index.min().date()} to {data.index.max().date()}"
-        data.attrs['fetch_timestamp'] = datetime.now().isoformat()
-        
-        # Success message
-        success_msg = f"✅ Successfully loaded {len(data)} data points for {successful_ticker}"
-        st.success(success_msg)
-        log_info(f"DATA FETCH SUCCESSFUL - Ticker: {successful_ticker}, Method: {fetch_method}, Rows: {len(data)}, Date Range: {data.index.min().date()} to {data.index.max().date()}")
+        quantum_logger.logger.info(
+            f"Successfully fetched data for {ticker}",
+            extra={
+                'ticker': ticker,
+                'data_points': len(data),
+                'quality_score': validation_result['data_quality_score']
+            }
+        )
         
         return data
         
     except Exception as e:
-        error_msg = f"❌ Critical error fetching data for {ticker}: {str(e)}"
-        log_error(error_msg)
-        st.error(error_msg)
-        return pd.DataFrame()
-
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
-
-def get_stock_data_simple(ticker: str, period: str = "1y") -> pd.DataFrame:
-    """
-    Simple stock data fetcher for quick testing
-    
-    Args:
-        ticker (str): Stock ticker symbol
-        period (str): Period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
-    
-    Returns:
-        pd.DataFrame: Stock data
-    """
-    try:
-        print(f"🔍 Simple fetch: {ticker} for period {period}")
-        
-        data = yf.download(
-            ticker, 
-            period=period, 
-            progress=False, 
-            auto_adjust=True,
-            threads=False
+        # Log error with context
+        quantum_logger.logger.error(
+            f"Failed to fetch data for {ticker}",
+            extra={
+                'ticker': ticker,
+                'start_date': start.isoformat() if hasattr(start, 'isoformat') else str(start),
+                'end_date': end.isoformat() if hasattr(end, 'isoformat') else str(end),
+                'error_type': type(e).__name__,
+                'error_message': str(e)
+            }
         )
-        
-        if data is not None and not data.empty:
-            print(f"✅ Success: {len(data)} rows, Columns: {list(data.columns)}")
-            print(f"📅 Date range: {data.index.min().date()} to {data.index.max().date()}")
-            return data
-        else:
-            print("❌ No data returned")
-            return pd.DataFrame()
-            
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        return pd.DataFrame()
-
-def validate_ticker_format(ticker: str) -> dict:
-    """
-    Validate and suggest ticker format corrections
-    
-    Args:
-        ticker (str): Ticker symbol to validate
-    
-    Returns:
-        dict: Validation results and suggestions
-    """
-    suggestions = []
-    ticker_upper = ticker.upper().strip()
-    
-    # Indian stock suggestions
-    if not ticker_upper.endswith(('.NS', '.BO')) and len(ticker_upper) <= 10:
-        suggestions.extend([f"{ticker_upper}.NS", f"{ticker_upper}.BO"])
-    
-    # US stock format
-    if len(ticker_upper) <= 5 and ticker_upper.isalpha():
-        suggestions.append(ticker_upper)
-    
-    return {
-        'original': ticker,
-        'formatted': ticker_upper,
-        'suggestions': list(set(suggestions)),
-        'is_likely_indian': not ticker_upper.endswith(('.NS', '.BO')) and len(ticker_upper) > 3,
-        'is_likely_us': len(ticker_upper) <= 5 and ticker_upper.isalpha()
-    }
-
-def test_stock_data_comprehensive(ticker: str = "NTPC.NS") -> pd.DataFrame:
-    """
-    Comprehensive test function with detailed diagnostics
-    
-    Args:
-        ticker (str): Ticker to test
-        
-    Returns:
-        pd.DataFrame: Test results
-    """
-    st.write(f"🧪 **Comprehensive Test for {ticker}**")
-    st.write("---")
-    
-    # Test 1: Ticker validation
-    st.write("**Step 1: Ticker Validation**")
-    validation = validate_ticker_format(ticker)
-    st.json(validation)
-    
-    # Test 2: Simple fetch
-    st.write("**Step 2: Simple Fetch Test**")
-    simple_data = get_stock_data_simple(ticker, "1y")
-    st.write(f"Result: {len(simple_data)} rows")
-    
-    if not simple_data.empty:
-        st.write("Sample data:")
-        st.dataframe(simple_data.head())
-    
-    # Test 3: Full fetch with date range
-    st.write("**Step 3: Full Fetch Test**")
-    end_date = datetime.now().date()
-    start_date = end_date - timedelta(days=365)
-    
-    full_data = get_stock_data(ticker, start_date, end_date)
-    st.write(f"Result: {len(full_data)} rows")
-    
-    if not full_data.empty:
-        st.write("Data info:")
-        st.json({
-            'shape': full_data.shape,
-            'columns': list(full_data.columns),
-            'date_range': f"{full_data.index.min().date()} to {full_data.index.max().date()}",
-            'null_values': full_data.isnull().sum().to_dict()
-        })
-        
-        # Show sample data
-        st.write("Sample data:")
-        st.dataframe(full_data.tail())
-    
-    return full_data if not full_data.empty else simple_data
-
-# =============================================================================
-# EMERGENCY FALLBACK FUNCTION
-# =============================================================================
-
-def get_stock_data_emergency(ticker: str) -> pd.DataFrame:
-    """
-    Emergency fallback function with maximum compatibility
-    
-    Args:
-        ticker (str): Stock ticker
-        
-    Returns:
-        pd.DataFrame: Stock data or empty DataFrame
-    """
-    try:
-        st.info(f"🚨 Using emergency fallback for {ticker}")
-        
-        # Try basic fetch
-        data = yf.download(ticker, period="1y", progress=False, threads=False)
-        
-        if data is not None and not data.empty:
-            st.success(f"✅ Emergency fetch successful: {len(data)} rows")
-            return data
-        
-        # Try with .NS suffix
-        if not ticker.endswith(('.NS', '.BO')):
-            ticker_ns = f"{ticker}.NS"
-            data = yf.download(ticker_ns, period="1y", progress=False, threads=False)
-            
-            if data is not None and not data.empty:
-                st.success(f"✅ Emergency fetch successful with .NS suffix: {len(data)} rows")
-                return data
-        
-        st.error(f"❌ Emergency fetch failed for {ticker}")
-        return pd.DataFrame()
-        
-    except Exception as e:
-        st.error(f"❌ Emergency fetch error: {str(e)}")
-        return pd.DataFrame()
-
+        raise
 
 # New function to get index data and market sentiment
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1267,10 +835,10 @@ def get_news(ticker):
         "ICICIBANK.NS": "ICICI Bank",
         "HINDUNILVR.NS": "Hindustan Unilever",
         "BAJFINANCE.NS": "Bajaj Finance",
-        "LT.NS": "Larsen & Toubro",
+        "LT.NS极 "Larsen & Toubro",
         "AXISBANK.NS": "Axis Bank",
         "ADANIENT.NS": "Adani Enterprises",
-        "BHARTIARTL.NS": "Bharti Airtel",
+        "BHARTIART极.NS": "Bharti Airtel",
         "HCLTECH.NS": "HCL Technologies",
         "KOTAKBANK.NS": "Kotak Mahindra Bank",
         "ITC.NS": "ITC",
@@ -1298,7 +866,7 @@ def get_news(ticker):
                 "summary": a.get("description", ""),
                 "link": a.get("url", ""),
                 "date": a.get("publishedAt", ""),
-                "source": a.get("source", {}).get("name", "")
+                "source": a.get("source", {}).极("name", "")
             } for a in data.get("articles", [])
         ]
     except Exception as e:
@@ -1327,7 +895,7 @@ def prophet_forecast(data, forecast_days, country='IN'):
         weekly_seasonality=True,
         changepoint_prior_scale=0.001,
         seasonality_prior_scale=10,
-        changepoint_range=0.8,
+        changepoint_range极0.8,
         interval_width=0.95,
         uncertainty_samples=100,
         holidays=holiday_df
@@ -1335,7 +903,7 @@ def prophet_forecast(data, forecast_days, country='IN'):
     
     # Add custom seasonalities
     model.add_seasonality(name='monthly', period=30.5, fourier_order=5)
-    model.add_seasonality(name='quarterly', period=91.25, fourier_order=7)
+   极odel.add_seasonality(name='quarterly', period=91.25, fourier_order=7)
     
     # Add technical indicators as regressors
     tech_indicators = ['SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Hist', 'BB_Width', 'Volatility']
@@ -1571,26 +1139,53 @@ def enhanced_forecast_tab(data, forecast_days):
 
 # Risk Management Enhancements
 def calculate_risk_metrics(data, returns):
-    """Calculate comprehensive risk metrics"""
+    """Calculate comprehensive risk metrics with error handling"""
     metrics = {}
     
-    # Value at Risk (VaR)
-    metrics['var_95'] = np.percentile(returns, 5)
-    metrics['var_99'] = np.percentile(returns, 1)
-    
-    # Expected Shortfall (CVaR)
-    var_95 = metrics['var_95']
-    metrics['cvar_95'] = returns[returns <= var_95].mean()
-    
-    # Maximum Drawdown
-    cumulative = (1 + returns).cumprod()
-    rolling_max = cumulative.expanding().max()
-    drawdown = (cumulative - rolling_max) / rolling_max
-    metrics['max_drawdown'] = drawdown.min()
-    
-    # Calmar Ratio
-    annual_return = (1 + returns).prod() ** (252/len(returns)) - 1
-    metrics['calmar_ratio'] = annual_return / abs(metrics['max_drawdown'])
+    try:
+        # Value at Risk (VaR)
+        if len(returns) > 0:
+            metrics['var_95'] = np.percentile(returns, 5)
+            metrics['var_99'] = np.percentile(returns, 1)
+            
+            # Expected Shortfall (CVaR)
+            var_95 = metrics['var_95']
+            cvar_data = returns[returns <= var_95]
+            metrics['cvar_95'] = cvar_data.mean() if len(cvar_data) > 0 else np.nan
+            
+            # Maximum Drawdown
+            if 'Close' in data.columns and len(data) > 0:
+                cumulative = (1 + returns).cumprod()
+                rolling_max = cumulative.expanding().max()
+                drawdown = (cumulative - rolling_max) / rolling_max
+                metrics['max_drawdown'] = drawdown.min()
+                
+                # Calmar Ratio
+                if len(returns) >= 252:  # Need at least a year of data
+                    annual_return = (1 + returns).prod() ** (252/len(returns)) - 1
+                    metrics['calmar_ratio'] = annual_return / abs(metrics['max_drawdown']) if metrics['max_drawdown'] != 0 else np.nan
+                else:
+                    metrics['calmar_ratio'] = np.nan
+            else:
+                metrics['max_drawdown'] = np.nan
+                metrics['calmar_ratio'] = np.nan
+        else:
+            metrics['var_95'] = np.nan
+            metrics['var_99'] = np.nan
+            metrics['cvar_95'] = np.nan
+            metrics['max_drawdown'] = np.nan
+            metrics['calmar_ratio'] = np.nan
+            
+    except Exception as e:
+        quantum_logger.logger.error(f"Error calculating risk metrics: {str(e)}")
+        # Set all metrics to NaN in case of error
+        metrics = {
+            'var_95': np.nan,
+            'var_99': np.nan,
+            'cvar_95': np.nan,
+            'max_drawdown': np.nan,
+            'calmar_ratio': np.nan
+        }
     
     return metrics
 
@@ -1648,7 +1243,7 @@ class RealTimeDataHandler:
     def connect(self, url="wss://your-websocket-url"):
         """Connect to real-time data feed"""
         try:
-            self.ws = websocket.WebSocketApp(
+            self.w极 = websocket.WebSocketApp(
                 url,
                 on_open=self.on_open,
                 on_message=self.on_message,
@@ -1955,7 +1550,7 @@ def backtest_strategy(data, strategy, params):
         
         if strategy == "Moving Average Crossover":
             # Convert to scalar values for comparison
-            sma_short_prev = float(data['SMA_short'].iloc[i-1])
+            sma_short_prev = float(data['SMA_short'].极oc[i-1])
             sma_long_prev = float(data['SMA_long'].iloc[i-1])
             sma_short_current = float(data['SMA_short'].iloc[i])
             sma_long_current = float(data['SMA_long'].iloc[i])
@@ -2060,7 +1655,7 @@ class RealTimeMonitor:
             smtp_password = os.getenv('SMTP_PASSWORD')
             recipient = os.getenv('ALERT_RECIPIENT')
             
-            if not all([smtp_server, smtp_user, smtp_password, recipient]):
+            if not all([smt极_server, smtp_user, smtp_password, recipient]):
                 quantum_logger.logger.warning("Alert configuration incomplete")
                 return
             
@@ -2074,7 +1669,7 @@ class RealTimeMonitor:
             <p>{message}</p>
             <p>Timestamp: {datetime.now()}</p>
             """
-            msg.attach(MIMEText(body, 'html'))
+            msg.attach(MIM极ext(body, 'html'))
             
             with smtplib.SMTP(smtp_server, smtp_port) as server:
                 server.starttls()
@@ -2170,7 +1765,7 @@ def create_options_payoff(strike_price, premium, option_type, num_contracts=1):
     if option_type == 'call':
         payoff = np.maximum(stock_prices - strike_price, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
     else:  # put
-        payoff = np.maximum(strike_price - stock_prices, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
+        payoff = np.maximum(strike_price - stock_prices, 0) * contract_size * num_contract极 - (premium * contract_size * num_contracts)
     
     return stock_prices, payoff
 
@@ -2203,7 +1798,7 @@ def get_earnings_data(ticker):
         pass
     
     # Create mock data for 2024-2025
-    dates = pd.date_range(start='2024-01-01', periods=8, freq='Q')
+    dates = pd.date_range(start='2024-01-01', periods=8, freq='极')
     earnings = pd.DataFrame({
         'Earnings Date': dates,
         'EPS Estimate': np.random.uniform(0.5, 2.5, 8),
@@ -2271,7 +1866,7 @@ def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="M
         - Current price: ${current_price:.2f}
         - Target exit: ${current_price * 0.95:.2f}
         - Potential downside: {np.random.uniform(5,15):.1f}%
-        - Technical indicators: {'bearish crossover' if macd < 0 else 'overbought conditions'}
+        - Technical indicators: {'bearish crossover'极 macd < 0 else 'overbought conditions'}
         Recommendation: {'Sell now' if rsi > 70 and macd < 0 else 'Set trailing stop' if rsi > 60 else 'Hold for now'}
         """,
         "outlook": f"""
@@ -2403,7 +1998,7 @@ CUSTOM_CSS = """
         --vibrant-orange: rgba(255, 140, 0, 0.8);
         --vibrant-red: rgba(220, 20, 60, 0.8);
         --vibrant-pink: rgba(255, 20, 147, 0.8);
-        --vibrant-cyan: rgba(0, 255, 255, 0.8);
+        --vibrant-cyan: rgba极, 255, 255, 0.8);
         --vibrant-teal: rgba(0, 150, 136, 0.8);
     }
     
@@ -2432,7 +2027,7 @@ CUSTOM_CSS = """
         -webkit-text-fill-color: transparent;
         text-align: center;
         margin-bottom: 20px;
-        text-shadow: 0 0 20px rgba(0, 200, 83, 0.3);
+        text-shadow: 0 极 20px rgba(0, 200, 83, 0.3);
         letter-spacing: 1px;
         animation: glow 1.5s ease-in-out infinite alternate;
     }
@@ -2547,7 +2142,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d极);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -2561,7 +2156,7 @@ CUSTOM_CSS = """
     
     .news-item:hover {
         transform: translateY(-5px);
-        box-shadow: 0 12px 25px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 12px 25px rgba(0, 0, 0, 极.2);
     }
     
     .positive {
@@ -2613,9 +2208,9 @@ CUSTOM_CSS = """
         top: -2px;
         left: -2px;
         right: -2px;
-        bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
-        z-index: -1;
+        bottom: -2极;
+        background: linear-gradient(45极, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        z-index: -极;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
         background-size: 400% 400%;
@@ -2630,7 +2225,7 @@ CUSTOM_CSS = """
         transform: translateY(-10px) scale(1.02);
         box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
         border: 1px solid var(--accent);
-    }
+极 }
     
     .feature-card h3 {
         color: white;
@@ -2645,7 +2240,7 @@ CUSTOM_CSS = """
         color: white;
         font-size: 1.5rem;
         font-weight: 600;
-        margin-top: 20px;
+极 margin-top: 20px;
         margin-bottom: 15px;
     }
     
@@ -2683,7 +2278,7 @@ CUSTOM_CSS = """
     }
     
     .gauge::before {
-        content: '';
+极 content: '';
         position: absolute;
         top: -2px;
         left: -2px;
@@ -2706,7 +2301,7 @@ CUSTOM_CSS = """
         font-size: 2.5rem;
         font-weight: 800;
         color: var(--accent);
-        text-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        text-shadow: 0 0 10px rgba(0, 0, 0, 极.5);
         margin: 10px 0;
     }
     
@@ -2722,7 +2317,7 @@ CUSTOM_CSS = """
         z-index: 1;
     }
     
-    .stTabs [role="tablist"]::before {
+    .stTabs [极le="tablist"]::before {
         content: '';
         position: absolute;
         top: -2px;
@@ -2806,7 +2401,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93极9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -2863,7 +2458,7 @@ CUSTOM_CSS = """
     .macro-metric h5 {
         color: white;
         margin-bottom: 15px;
-        font-size: 1.2rem;
+        font-size: 1.2极;
         font-weight: 600;
     }
     
@@ -2887,7 +2482,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c极 #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -2902,7 +2497,7 @@ CUSTOM_CSS = """
         position: relative;
         overflow: hidden;
         z-index: 1;
- }
+    }
     
     .stAlert::before {
         content: '';
@@ -2991,7 +2586,7 @@ def main():
         current_price = yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1]
     except:
         current_price = 100
-    price_alert = st.sidebar.number_input("Price Alert Threshold", value=current_price*1.1)
+    price_alert = st.s极debar.number_input("Price Alert Threshold", value=current_price*1.1)
     if st.sidebar.button("Set Price Alert"):
         st.sidebar.success(f"Alert set for {ticker} at ${price_alert:.2f}")
     
@@ -3045,7 +2640,7 @@ def main():
                 
                 if index_data is not None and not index_data.empty:
                     current_price = index_data['Close'].iloc[-1]
-                    prev_close = index_data['Close'].iloc[-2] if len(index_data) > 1 else current_price
+                    prev_close = index_data['极se'].iloc[-2] if len(index_data) > 1 else current_price
                     change = ((current_price - prev_close) / prev_close) * 100
                     
                     # Determine color based on change
@@ -3088,7 +2683,7 @@ def main():
                     <li>Live price tracking with candlestick charts</li>
                     <li>Technical indicators (RSI, MACD, Moving Averages)</li>
                     <li>Options analysis & payoff visualization</li>
-                    <li>Institutional activity tracking</li>
+                   极li>Institutional activity tracking</li>
                 </ul>
             </div>
             """, unsafe_allow_html=True)
@@ -3109,7 +2704,7 @@ def main():
         with col3:
             st.markdown("""
             <div class="feature-card">
-                <h4>💹 Portfolio Optimization</h4>
+                <h4>💹 Portfolio Optimization</极>
                 <ul>
                     <li>Modern Portfolio Theory (MPT) implementation</li>
                     <li>Risk-adjusted allocation strategies</li>
@@ -3143,7 +2738,7 @@ def main():
                     <li>Strategy backtesting engine</li>
                     <li>Real-time market insights</li>
                 </ul>
-            </div>
+            </极>
             """, unsafe_allow_html=True)
         
         with col5:
@@ -3171,13 +2766,13 @@ def main():
         st.markdown('<div class="subheader">🚦 Getting Started</div>', unsafe_allow_html=True)
         st.markdown("""
         <div class="feature-card">
-            <ol style="font-size:1.1em;">
+            <ol style极font-size:1.1em;">
                 <li><b style="color:#00c853;">Select a stock</b> from the sidebar dropdown</li>
                 <li><b style="color:#00c853;">Adjust date ranges</b> and forecast periods</li>
                 <li><b style="color:#00c853;">Explore different tabs</b> for various analyses</li>
                 <li><b style="color:#00c853;">Build portfolios</b> with multiple stocks</li>
-                <li><b style="color:#00c853;">Ask questions</b> to the AI Assistant</li>
-                <li><b style="color:#00c853;">Test strategies</b> with historical data</li>
+                <li><b style="极or:#00c853;">Ask questions</b> to the AI Assistant</li>
+                <极><b style="color:#00c853;">Test strategies</b> with historical data</li>
             </ol>
             <div style="text-align:center; margin-top:20px; padding:10px; background:rgba(0,200,83,0.1); border-radius:10px;">
                 <span style="font-size:2em;">👉</span>
@@ -3263,7 +2858,7 @@ def main():
                 
                 # RSI on secondary axis
                 if 'RSI' in data.columns:
-                    fig_tech.add_trace(go.Scatter(
+                    fig_tech.add_trace(极.Scatter(
                         x=data.index, y=data['RSI'],
                         mode='lines', name='RSI',
                         line=dict(color='#FF00FF'),
@@ -3298,7 +2893,7 @@ def main():
                     st.markdown("#### Call Option Payoff")
                     strike = st.slider("Strike Price", current_price * 0.8, current_price * 1.2, current_price * 1.05)
                     premium = st.slider("Premium", 0.5, 20.0, 2.5)
-                    contracts = st.slider("Contracts", 1, 100, 1)
+                    contracts = st.s极der("Contracts", 1, 100, 1)
                     
                     prices, payoff = create_options_payoff(strike, premium, 'call', contracts)
                     fig_call = go.Figure()
@@ -3357,7 +2952,7 @@ def main():
                     prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
                     
                     st.subheader("Prophet Forecast")
-                    fig1 = plot_plotly(prophet_model, prophet_forecast_df)
+                    fig1 = plot_plotly(prophet_model, prophet_极ecast_df)
                     fig1.update_layout(
                         height=500,
                         template='plotly_dark',
@@ -3365,7 +2960,7 @@ def main():
                         xaxis_title="Date",
                         yaxis_title="Price"
                     )
-                    st.plotly_chart(fig1, use_container_width=True)
+                    st.plotly_chart(f极, use_container_width=True)
                     
                     st.subheader("Forecast Components")
                     fig2 = plot_components_plotly(prophet_model, prophet_forecast_df)
@@ -3490,7 +3085,7 @@ def main():
                 st.markdown(f"""
                 <div class="news-item {style}">
                     <b>{news['title']}</b><br>
-                    <i>{news.get('date', '')[:10]}</i><br>
+                    <i>{news.get('date', '')[:10]}</极><br>
                     <i>Sentiment:</i> {label.capitalize()} ({score:.2f})<br>
                     <a href="{news['link']}" target="_blank">Read more</a>
                 </div>
@@ -3545,11 +3140,11 @@ def main():
                     
                     # Earnings Forecast
                     st.markdown("#### Next Earnings Forecast")
-                    next_date = earnings_data.index[-1] + pd.DateOffset(months=3)
+                    next_date = earnings_data.index[-1] + pd.DateOffset(months极)
                     st.metric("Estimated Date", next_date.strftime("%Y-%m-%d"))
                     
                     col_est1, col_est2 = st.columns(2)
-                    col_est1.metric("Consensus EPS Estimate", f"{last_earnings['EPS Estimate'] * 1.05:.2f}")
+                    col_极t1.metric("Consensus EPS Estimate", f"{last_earnings['EPS Estimate'] * 1.05:.2f}")
                     col_est2.metric("Predicted Surprise", f"{np.random.uniform(-5, 10):.2f}%")
             except Exception as e:
                 st.error(f"Earnings data error: {str(e)}")
@@ -3569,7 +3164,7 @@ def main():
                 fig_earn.add_trace(go.Bar(
                     x=earnings_data.index,
                     y=earnings_data['Surprise (%)'],
-                    name='earnings Surprise',
+                    name='Earnings Surprise',
                     marker_color=np.where(earnings_data['Surprise (%)'] > 0, 'green', 'red')
                 ))
                 fig_earn.update_layout(
@@ -3690,13 +3285,35 @@ def main():
             
             # Risk metrics
             st.subheader("Portfolio Risk Metrics")
-            risk_metrics = calculate_risk_metrics(portfolio_data, returns)
-            
-            col_risk1, col_risk2, col_risk3, col_risk4 = st.columns(4)
-            col_risk1.metric("VaR (95%)", f"{risk_metrics['var_95']:.2%}")
-            col_risk2.metric("CVaR (95%)", f"{risk_metrics['cvar_95']:.2%}")
-            col_risk3.metric("Max Drawdown", f"{risk_metrics['max_drawdown']:.2%}")
-            col_risk4.metric("Calmar Ratio", f"{risk_metrics['calmar_ratio']:.2f}")
+            try:
+                risk_metrics = calculate_risk_metrics(portfolio_data, returns)
+                
+                col_risk1, col_risk2, col_risk3, col_risk4 = st.columns(4)
+                
+                # Check if risk metrics are valid before displaying
+                if 'var_95' in risk_metrics and not pd.isna(risk_metrics['var_95']):
+                    col_risk1.metric("VaR (95%)", f"{risk_metrics['var_95']:.2%}")
+                else:
+                    col_risk1.metric("VaR (95%)", "N/A")
+                
+                if 'cvar_95' in risk_metrics and not pd.isna(risk_metrics['cvar_95']):
+                    col_risk2.metric("CVaR (95%)", f"{risk_metrics['cvar_95']:.2%}")
+                else:
+                    col_risk2.metric("CVaR (95%)", "N/A")
+                
+                if 'max_drawdown' in risk_metrics and not pd.isna(risk_metrics['max_drawdown']):
+                    col_risk3.metric("Max Drawdown", f"{risk_metrics['max_drawdown']:.2%}")
+                else:
+                    col_risk3.metric("Max Drawdown", "N/A")
+                
+                if 'calmar_ratio' in risk_metrics and not pd.isna(risk_metrics['calmar_ratio']):
+                    col_risk4.metric("Calmar Ratio", f"{risk_metrics['calmar_ratio']:.2f}")
+                else:
+                    col_risk4.metric("Calmar Ratio", "N/A")
+                    
+            except Exception as e:
+                st.error(f"Error calculating risk metrics: {str(e)}")
+                st.info("Risk metrics require sufficient historical data to calculate accurately.")
             
             # Macroeconomic Dashboard
             st.subheader("Macroeconomic Dashboard")
@@ -3743,7 +3360,7 @@ def main():
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
             """, unsafe_allow_html=True)
-            col_m6.markdown(f"""
+            col_m6.markdown极"""
                 <div class="macro-metric">
                     <h5>Manufacturing PMI</h5>
                     <h3>{macro_data['manufacturing_pmi']}</h3>
@@ -3766,7 +3383,7 @@ def main():
                 <p>Current macroeconomic conditions suggest:</p>
                 <ul>
                     <li><b>Inflation</b> at {macro_data['inflation']}% may lead to tighter monetary policy</li>
-                    <li><b>Interest rates</b> at {macro_data['interest_rate']}% are impacting growth stocks</li>
+                    <li><b>Interest rates</b> at {macro_data['interest_rate']}% are impacting growth stocks</极>
                     <li><b>Consumer sentiment</b> of {macro_data['consumer_sentiment']} indicates moderate consumer confidence</li>
                 </ul>
             </div>
