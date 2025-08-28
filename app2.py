@@ -595,7 +595,7 @@ def main():
         st.plotly_chart(plot_stock_data(data, ticker), use_container_width=True)
     
     # Technical Analysis Tab
-    with tab2:
+with tab2:
         st.header("Technical Analysis")
     
         # Display technical indicators
@@ -605,25 +605,63 @@ def main():
         # Feature importance (simplified)
         st.subheader("Feature Correlation with Price")
         if len(data) > 30:  # Ensure we have enough data
-            numeric_data = data.select_dtypes(include=[np.number])
-        
-            # Check if 'Close' exists in numeric_data
-            if 'Close' in numeric_data.columns:
-                corr = numeric_data.corr()['Close'].sort_values(ascending=False)
-            
-                # Remove price itself from correlation list
-                corr = corr.drop('Close', errors='ignore')
-            
-                fig = px.bar(
-                    x=corr.values, 
-                    y=corr.index, 
-                    orientation='h',
-                    title='Feature Correlation with Closing Price',
-                    labels={'x': 'Correlation', 'y': 'Feature'}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Close price data not available for correlation analysis")
+            try:
+                # Get numeric data
+                numeric_data = data.select_dtypes(include=[np.number])
+                
+                # Debug: Show what columns we have
+                st.write(f"Available numeric columns: {list(numeric_data.columns)}")
+                
+                # Check if we have enough numeric columns and 'Close' exists
+                if len(numeric_data.columns) < 2:
+                    st.warning("Not enough numeric columns for correlation analysis")
+                elif 'Close' not in numeric_data.columns:
+                    st.warning("Close price column not found in numeric data")
+                    st.write("Available columns:", list(numeric_data.columns))
+                else:
+                    # Remove any columns with all NaN values
+                    numeric_data = numeric_data.dropna(axis=1, how='all')
+                    
+                    # Check for sufficient non-null values
+                    if numeric_data['Close'].isna().all():
+                        st.warning("Close price column contains only null values")
+                    else:
+                        # Calculate correlation matrix
+                        correlation_matrix = numeric_data.corr()
+                        
+                        # Check if correlation was successful
+                        if correlation_matrix is None or correlation_matrix.empty:
+                            st.warning("Could not calculate correlation matrix")
+                        elif 'Close' not in correlation_matrix.columns:
+                            st.warning("Close price not found in correlation matrix")
+                        else:
+                            # Get correlations with Close price
+                            corr = correlation_matrix['Close'].sort_values(ascending=False)
+                            
+                            # Remove price itself from correlation list
+                            corr = corr.drop('Close', errors='ignore')
+                            
+                            # Only show if we have correlations to display
+                            if len(corr) > 0:
+                                fig = px.bar(
+                                    x=corr.values, 
+                                    y=corr.index, 
+                                    orientation='h',
+                                    title='Feature Correlation with Closing Price',
+                                    labels={'x': 'Correlation', 'y': 'Feature'}
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.info("No other numeric features available for correlation analysis")
+                                
+            except Exception as e:
+                st.error(f"Error in correlation analysis: {str(e)}")
+                st.write("Data info:")
+                st.write(f"Data shape: {data.shape}")
+                st.write(f"Data columns: {list(data.columns)}")
+                st.write(f"Data types: {data.dtypes}")
+        else:
+            st.warning("Not enough data points (need more than 30) for reliable correlation analysis")
     
     # Prediction Tab
     with tab3:
