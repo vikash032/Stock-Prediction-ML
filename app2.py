@@ -15,6 +15,7 @@ import requests
 import os
 import re
 import ta
+from groq import Groq
 import warnings
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import time
