@@ -241,7 +241,7 @@ class RobustAPIClient:
         retry_strategy = Retry(
             total=max_retries,
             backoff_factor=1,
-            status_forcelist=[429, 500, 502极 503, 504],
+            status_forcelist=[429, 500, 502, 503, 504],
             method_whitelist=["HEAD", "GET", "OPTIONS"]
         )
         
@@ -294,7 +294,7 @@ class CircuitBreaker:
         self.failure_threshold = failure_threshold
         self.timeout = timeout
         self.failure_count = 0
-极 self.last_failure_time = None
+ self.last_failure_time = None
         self.state = 'CLOSED'  # CLOSED, OPEN, HALF_OPEN
     
     def call(self, func, *args, **kwargs):
