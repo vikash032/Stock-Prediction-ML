@@ -16,7 +16,7 @@ import os
 import re
 import ta
 import warnings
-from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 import time
 import random
 import logging
@@ -25,7 +25,7 @@ import holidays
 import json
 import shap
 import matplotlib.pyplot as plt
-from sklearn.ensemble import RandomForestRegressor, VotingRegressor
+from sklearn.ensemble import RandomForestRegressor
 from scipy.optimize import minimize
 import redis
 import smtplib
@@ -34,492 +34,11 @@ from email.mime.multipart import MIMEMultipart
 import calendar
 from transformers import pipeline
 from sklearn.linear_model import LinearRegression
-import xgboost as xgb
-import asyncio
-import websocket
-from threading import Thread
-import queue
-import traceback
-from functools import wraps
-import sentry_sdk
-from sentry_sdk.integrations.logging import LoggingIntegration
-import aiohttp
-from concurrent.futures import ThreadPoolExecutor
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-import pickle
-import hashlib
-import psutil
-from typing import Optional, Dict, Any
 
 # ------------------ CONFIGURATION ------------------
-# Initialize enhanced logging
-class QuantumLogger:
-    def __init__(self, name: str = "quantum_analytics"):
-        self.logger = logging.getLogger(name)
-        self.setup_logging()
-        self.setup_sentry()
-    
-    def setup_logging(self):
-        """Setup comprehensive logging"""
-        # Create formatters
-        detailed_formatter = logging.Formatter(
-            '%(asctime)s | %(name)s | %(levelname)s | %(filename)s:%(lineno)d | %(message)s'
-        )
-        
-        simple_formatter = logging.Formatter(
-            '%(levelname)s: %(message)s'
-        )
-        
-        # File handler for detailed logs
-        file_handler = logging.FileHandler('quantum_analytics.log')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(detailed_formatter)
-        
-        # Console handler for user-facing messages
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(simple_formatter)
-        
-        # Add handlers
-        self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
-        self.logger.setLevel(logging.DEBUG)
-    
-    def setup_sentry(self):
-        """Setup error tracking with Sentry"""
-        try:
-            sentry_logging = LoggingIntegration(
-                level=logging.INFO,
-                event_level=logging.ERROR
-            )
-            
-            sentry_sdk.init(
-                dsn=os.getenv('SENTRY_DSN'),
-                integrations=[sentry_logging],
-                traces_sample_rate=0.1,
-                environment="production"
-            )
-        except Exception as e:
-            self.logger.warning(f"Sentry setup failed: {e}")
-
-# Global logger instance
-quantum_logger = QuantumLogger()
-
-def handle_exceptions(fallback_value=None, user_message=None):
-    """Decorator for comprehensive exception handling"""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                # Log the full traceback
-                error_details = {
-                    'function': func.__name__,
-                    'args': str(args)[:200] + '...' if len(str(args)) > 200 else str(args),
-                    'kwargs': str(kwargs)[:200] + '...' if len(str(kwargs)) > 200 else str(kwargs),
-                    'error_type': type(e).__name__,
-                    'error_message': str(e),
-                    'traceback': traceback.format_exc()
-                }
-                
-                # ✅ wrap inside safe key to avoid reserved LogRecord keys
-                quantum_logger.logger.error(
-                    f"Exception in {func.__name__}",
-                    extra={"error_context": error_details}
-                )
-                
-                # User-friendly message
-                if user_message:
-                    st.error(user_message)
-                else:
-                    st.error(f"An error occurred in {func.__name__}. Please try again or contact support.")
-                
-                # Return fallback value
-                return fallback_value
-        
-        return wrapper
-    return decorator
-
-
-# Data validation utilities
-class DataValidator:
-    @staticmethod
-    def validate_stock_data(data: pd.DataFrame, ticker: str) -> Dict[str, Any]:
-        """Comprehensive stock data validation"""
-        validation_result = {
-            'is_valid': True,
-            'warnings': [],
-            'errors': [],
-            'data_quality_score': 100
-        }
-        
-        # Check if data is empty
-        if data.empty:
-            validation_result['is_valid'] = False
-            validation_result['errors'].append("No data available")
-            return validation_result
-        
-        # Check required columns
-        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-        missing_columns = [col for col in required_columns if col not in data.columns]
-        
-        if missing_columns:
-            validation_result['errors'].append(f"Missing columns: {missing_columns}")
-            validation_result['data_quality_score'] -= 20
-        
-        # Check for data consistency
-        if not data.empty and 'Close' in data.columns:
-            # Check for impossible price values
-            negative_prices = (data[['Open', 'High', 'Low', 'Close']] < 0).any().any()
-            if negative_prices:
-                validation_result['warnings'].append("Negative prices detected")
-                validation_result['data_quality_score'] -= 10
-            
-            # Check for extreme price movements (>50% in a day)
-            daily_returns = data['Close'].pct_change().abs()
-            extreme_moves = daily_returns > 0.5
-            
-            if extreme_moves.any():
-                extreme_count = extreme_moves.sum()
-                validation_result['warnings'].append(
-                    f"{extreme_count} days with extreme price movements (>50%)"
-                )
-                validation_result['data_quality_score'] -= min(30, extreme_count * 5)
-            
-            # Check data recency
-            last_date = data.index[-1]
-            days_old = (pd.Timestamp.now() - last_date).days
-            
-            if days_old > 7:
-                validation_result['warnings'].append(f"Data is {days_old} days old")
-                validation_result['data_quality_score'] -= min(20, days_old * 2)
-            
-            # Check for data gaps
-            expected_trading_days = pd.bdate_range(
-                start=data.index[0], 
-                end=data.index[-1]
-            )
-            missing_days = len(expected_trading_days) - len(data)
-            
-            if missing_days > 5:
-                validation_result['warnings'].append(f"{missing_days} missing trading days")
-                validation_result['data_quality_score'] -= min(25, missing_days * 2)
-        
-        # Final validation
-        if validation_result['data_quality_score'] < 50:
-            validation_result['is_valid'] = False
-        
-        return validation_result
-    
-    @staticmethod
-    def validate_portfolio_inputs(tickers: list, weights: list) -> bool:
-        """Validate portfolio construction inputs"""
-        if not tickers:
-            st.error("No tickers provided for portfolio")
-            return False
-        
-        if len(tickers) != len(weights):
-            st.error("Number of tickers must match number of weights")
-            return False
-        
-        weight_sum = sum(weights)
-        if abs(weight_sum - 1.0) > 0.01:
-            st.error(f"Portfolio weights must sum to 1.0 (current sum: {weight_sum:.3f})")
-            return False
-        
-        if any(w < 0 for w in weights):
-            st.error("Portfolio weights cannot be negative")
-            return False
-        
-        return True
-
-# Enhanced API rate limiting and retry logic
-class RobustAPIClient:
-    def __init__(self, base_url: str, timeout: int = 30, max_retries: int = 3):
-        self.base_url = base_url
-        self.timeout = timeout
-        self.session = requests.Session()
-        
-        # Configure retry strategy
-        retry_strategy = Retry(
-            total=max_retries,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            method_whitelist=["HEAD", "GET", "OPTIONS"]
-        )
-        
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
-        
-        # Rate limiting
-        self.last_request_time = 0
-        self.min_request_interval = 0.1  # 10 requests per second max
-    
-    @handle_exceptions(fallback_value=None)
-    def make_request(self, endpoint: str, params: dict = None) -> Optional[dict]:
-        """Make API request with rate limiting and error handling"""
-        
-        # Rate limiting
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
-        
-        if time_since_last < self.min_request_interval:
-            sleep_time = self.min_request_interval - time_since_last
-            time.sleep(sleep_time)
-        
-        # Make request
-        url = f"{self.base_url}/{endpoint}"
-        
-        try:
-            response = self.session.get(
-                url, 
-                params=params, 
-                timeout=self.timeout
-            )
-            response.raise_for_status()
-            
-            self.last_request_time = time.time()
-            
-            return response.json()
-            
-        except requests.exceptions.RequestException as e:
-            quantum_logger.logger.error(f"API request failed: {url}", extra={
-                'endpoint': endpoint,
-                'params': params,
-                'error': str(e)
-            })
-            return None
-
-# Circuit breaker pattern for external services
-class CircuitBreaker:
-    def __init__(self, failure_threshold: int = 5, timeout: int = 60):
-        self.failure_threshold = failure_threshold
-        self.timeout = timeout
-        self.failure_count = 0
-        self.last_failure_time = None
-        self.state = 'CLOSED'  # CLOSED, OPEN, HALF_OPEN
-    
-    def call(self, func, *args, **kwargs):
-        """Execute function with circuit breaker protection"""
-        
-        if self.state == 'OPEN':
-            if self._should_attempt_reset():
-                self.state = 'HALF_OPEN'
-            else:
-                raise Exception("Circuit breaker is OPEN - service unavailable")
-        
-        try:
-            result = func(*args, **kwargs)
-            self._on_success()
-            return result
-            
-        except Exception as e:
-            self._on_failure()
-            raise e
-    
-    def _should_attempt_reset(self) -> bool:
-        return (
-            self.last_failure_time and
-            time.time() - self.last_failure_time >= self.timeout
-        )
-    
-    def _on_success(self):
-        self.failure_count = 0
-        self.state = 'CLOSED'
-    
-    def _on_failure(self):
-        self.failure_count += 1
-        self.last_failure_time = time.time()
-        
-        if self.failure_count >= self.failure_threshold:
-            self.state = 'OPEN'
-
-# Enhanced caching with TTL and invalidation
-class SmartCache:
-    def __init__(self, default_ttl: int = 3600):
-        self.cache = {}
-        self.default_ttl = default_ttl
-    
-    def _generate_key(self, func_name: str, args: tuple, kwargs: dict) -> str:
-        """Generate cache key from function signature"""
-        key_data = f"{func_name}:{str(args)}:{str(sorted(kwargs.items()))}"
-        return hashlib.md5(key_data.encode()).hexdigest()
-    
-    def get(self, key: str) -> Optional[Any]:
-        """Get item from cache"""
-        if key in self.cache:
-            item = self.cache[key]
-            if datetime.now() < item['expires']:
-                return item['data']
-            else:
-                del self.cache[key]
-        return None
-    
-    def set(self, key: str, data: Any, ttl: Optional[int] = None) -> None:
-        """Set item in cache"""
-        ttl = ttl or self.default_ttl
-        expires = datetime.now() + timedelta(seconds=ttl)
-        
-        self.cache[key] = {
-            'data': data,
-            'expires': expires,
-            'created': datetime.now()
-        }
-    
-    def invalidate_pattern(self, pattern: str) -> int:
-        """Invalidate cache entries matching pattern"""
-        removed = 0
-        keys_to_remove = []
-        
-        for key in self.cache.keys():
-            if pattern in key:
-                keys_to_remove.append(key)
-        
-        for key in keys_to_remove:
-            del self.cache[key]
-            removed += 1
-        
-        return removed
-    
-    def cache_info(self) -> dict:
-        """Get cache statistics"""
-        total_items = len(self.cache)
-        expired_items = sum(
-            1 for item in self.cache.values() 
-            if datetime.now() >= item['expires']
-        )
-        
-        return {
-            'total_items': total_items,
-            'active_items': total_items - expired_items,
-            'expired_items': expired_items,
-            'memory_usage_mb': len(pickle.dumps(self.cache)) / 1024 / 1024
-        }
-
-# Global cache instance
-smart_cache = SmartCache()
-
-# Health check system
-class HealthChecker:
-    def __init__(self):
-        self.checks = {}
-    
-    def add_check(self, name: str, check_func, critical: bool = False):
-        """Add health check"""
-        self.checks[name] = {
-            'func': check_func,
-            'critical': critical,
-            'last_status': None,
-            'last_check': None
-        }
-    
-    def run_checks(self) -> dict:
-        """Run all health checks"""
-        results = {
-            'overall_status': 'healthy',
-            'checks': {},
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        critical_failures = 0
-        
-        for name, check_config in self.checks.items():
-            try:
-                start_time = time.time()
-                status = check_config['func']()
-                duration = (time.time() - start_time) * 1000  # ms
-                
-                check_result = {
-                    'status': 'healthy' if status else 'unhealthy',
-                    'duration_ms': round(duration, 2),
-                    'critical': check_config['critical'],
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                if not status:
-                    if check_config['critical']:
-                        critical_failures += 1
-                    check_result['status'] = 'unhealthy'
-                
-                results['checks'][name] = check_result
-                
-                # Update last status
-                self.checks[name]['last_status'] = status
-                self.checks[name]['last_check'] = datetime.now()
-                
-            except Exception as e:
-                results['checks'][name] = {
-                    'status': 'error',
-                    'error': str(e),
-                    'critical': check_config['critical'],
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                if check_config['critical']:
-                    critical_failures += 1
-        
-        # Determine overall status
-        if critical_failures > 0:
-            results['overall_status'] = 'critical'
-        elif any(check['status'] != 'healthy' for check in results['checks'].values()):
-            results['overall_status'] = 'degraded'
-        
-        return results
-
-# Initialize health checker with common checks
-health_checker = HealthChecker()
-
-def check_api_connectivity():
-    """Check if external APIs are accessible"""
-    try:
-        response = requests.get('https://query1.finance.yahoo.com/v8/finance/chart/AAPL', timeout=5)
-        return response.status_code == 200
-    except:
-        return False
-
-def check_data_freshness():
-    """Check if cached data is fresh"""
-    cache_info = smart_cache.cache_info()
-    return cache_info['expired_items'] < cache_info['total_items'] * 0.5
-
-def check_memory_usage():
-    """Check memory usage"""
-    import psutil
-    memory_percent = psutil.virtual_memory().percent
-    return memory_percent < 85  # Alert if memory usage > 85%
-
-# Add health checks
-health_checker.add_check('api_connectivity', check_api_connectivity, critical=True)
-health_checker.add_check('data_freshness', check_data_freshness, critical=False)
-health_checker.add_check('memory_usage', check_memory_usage, critical=False)
-
-# Performance monitoring decorator
-def monitor_performance(threshold_ms: int = 1000):
-    """Decorator to monitor function performance"""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            start_time = time.time()
-            result = func(*args, **kwargs)
-            duration_ms = (time.time() - start_time) * 1000
-            
-            # Log slow operations
-            if duration_ms > threshold_ms:
-                quantum_logger.logger.warning(
-                    f"Slow operation detected: {func.__name__} took {duration_ms:.2f}ms",
-                    extra={
-                        'function': func.__name__,
-                        'duration_ms': duration_ms,
-                        'threshold_ms': threshold_ms
-                    }
-                )
-            
-            return result
-        return wrapper
-    return decorator
+# Initialize logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -548,71 +67,15 @@ INDIAN_INDICES = {
 }
 
 # ------------------ MODULES ------------------
-# Data Quality & Validation
-@handle_exceptions(fallback_value=pd.DataFrame(), user_message="Data validation failed. Please try a different ticker or date range.")
-def validate_stock_data(data, min_days=30):
-    """Enhanced data validation"""
-    if data.empty:
-        raise ValueError("No data available")
-    
-    # Check for data gaps
-    date_range = pd.date_range(start=data.index.min(), end=data.index.max(), freq='D')
-    missing_days = len(date_range) - len(data)
-    if missing_days > len(data) * 0.1:  # More than 10% missing
-        st.warning(f"Data has {missing_days} missing days")
-    
-    # Check for outliers
-    price_changes = data['Close'].pct_change().abs()
-    if price_changes.max() > 0.2:  # 20% single-day change
-        st.warning("Unusual price movements detected")
-    
-    return data
-
-# Module 1: Data Fetching @st.cache_data(ttl=180, show_spinner=False, max_entries=50)
-@handle_exceptions(fallback_value=pd.DataFrame(), user_message="Failed to fetch stock data. Please try again.")
-@monitor_performance(threshold_ms=2000)
+# Module 1: Data Fetching - IMPROVED for better accuracy
+@st.cache_data(ttl=180, show_spinner=False, max_entries=50)  # Reduced TTL for more frequent updates
 def get_stock_data(ticker, start, end):
     """Fetch stock data from Yahoo Finance with robust error handling"""
     try:
-        quantum_logger.logger.info(f"Fetching data for {ticker} from {start} to {end}")
-        
-        # Validate and adjust dates to ensure they're not in the future
-        today = datetime.now().date()
-        
-        # Convert start and end to datetime.date if they're not already
-        if isinstance(start, datetime):
-            start = start.date()
-        if isinstance(end, datetime):
-            end = end.date()
-        
-        # Adjust dates if they're in the future
-        if start > today:
-            start = today - timedelta(days=365)  # Default to 1 year ago if start is in future
-            st.warning(f"Start date was in the future. Adjusted to {start}")
-        
-        if end > today:
-            end = today  # Set end to today if it's in the future
-            st.warning(f"End date was in the future. Adjusted to {end}")
-        
-        # Ensure start is before end
-        if start >= end:
-            start = end - timedelta(days=365)  # Set start to 1 year before end
-            st.warning(f"Start date was after end date. Adjusted to {start}")
-        
-        # Check cache first
-        cache_key = smart_cache._generate_key('get_stock_data', (ticker, start, end), {})
-        cached_data = smart_cache.get(cache_key)
-        
-        if cached_data is not None:
-            quantum_logger.logger.info(f"Cache hit for {ticker}")
-            return cached_data
-        
-        # Convert back to datetime for yfinance
-        start_dt = datetime.combine(start, datetime.min.time())
-        end_dt = datetime.combine(end, datetime.min.time())
+        logger.info(f"Fetching data for {ticker} from {start} to {end}")
         
         # For Indian stocks, ensure we're using the correct symbol format
-        data = yf.download(ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
+        data = yf.download(ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
                           progress=False, auto_adjust=True)
         
         if data.empty or len(data) < 10:
@@ -620,17 +83,17 @@ def get_stock_data(ticker, start, end):
             if ticker.endswith('.NS'):
                 # Try without NS suffix
                 alt_ticker = ticker.replace('.NS', '.BO')  # BSE
-                data = yf.download(alt_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
+                data = yf.download(alt_ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
                                   progress=False, auto_adjust=True)
             
             if data.empty:
                 # Try with just the symbol
                 base_ticker = ticker.replace('.NS', '').replace('.BO', '')
-                data = yf.download(base_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
+                data = yf.download(base_ticker, start=start - timedelta(days=60), end=end + timedelta(days=1), 
                                   progress=False, auto_adjust=True)
         
         if data.empty:
-            quantum_logger.logger.warning(f"No data found for {ticker}, trying 1-year period")
+            logger.warning(f"No data found for {ticker}, trying 1-year period")
             data = yf.download(ticker, period="1y", auto_adjust=True)
             if data.empty:
                 raise ValueError(f"No data available for {ticker}")
@@ -640,45 +103,12 @@ def get_stock_data(ticker, start, end):
         for col in required_columns:
             if col not in data.columns:
                 raise ValueError(f"Missing required column: {col}")
-        
-        # Validate data quality
-        validation_result = DataValidator.validate_stock_data(data, ticker)
-        
-        if not validation_result['is_valid']:
-            raise ValueError(f"Data validation failed: {validation_result['errors']}")
-        
-        # Show warnings to user
-        for warning in validation_result['warnings']:
-            st.warning(warning)
-        
-        # Cache successful result
-        smart_cache.set(cache_key, data, ttl=1800)  # 30 minutes
-        
-        quantum_logger.logger.info(
-            f"Successfully fetched data for {ticker}",
-            extra={
-                'ticker': ticker,
-                'data_points': len(data),
-                'quality_score': validation_result['data_quality_score']
-            }
-        )
-        
+                
         return data
-        
     except Exception as e:
-        # Log error with context
-        quantum_logger.logger.error(
-            f"Failed to fetch data for {ticker}",
-            extra={
-                'ticker': ticker,
-                'start_date': start.isoformat() if hasattr(start, 'isoformat') else str(start),
-                'end_date': end.isoformat() if hasattr(end, 'isoformat') else str(end),
-                'error_type': type(e).__name__,
-                'error_message': str(e)
-            }
-        )
-        raise
-
+        logger.error(f"Data fetch error: {str(e)}")
+        st.error(f"Data fetch error: {str(e)}. Please try a different ticker or date range.")
+        return pd.DataFrame()
 
 # New function to get index data and market sentiment
 @st.cache_data(ttl=300, show_spinner=False)
@@ -712,7 +142,7 @@ def get_index_data(index_name, period="1mo"):
         return hist, sentiment
         
     except Exception as e:
-        quantum_logger.logger.error(f"Error fetching index data: {str(e)}")
+        logger.error(f"Error fetching index data: {str(e)}")
         return None, "Neutral"
 
 # Function to get market sentiment from Nifty 50
@@ -738,7 +168,7 @@ def get_market_sentiment():
         return sentiment_score, sentiment
         
     except Exception as e:
-        quantum_logger.logger.error(f"Error calculating market sentiment: {str(e)}")
+        logger.error(f"Error calculating market sentiment: {str(e)}")
         return 65, "Neutral"  # Default to neutral
 
 # Module 2: Technical Analysis
@@ -755,13 +185,13 @@ def calculate_technical_indicators(data):
         data['SMA50'] = close_series.rolling(window=50).mean()
         data['EMA20'] = close_series.ewm(span=20, adjust=False).mean()
     except Exception as e:
-        quantum_logger.logger.error(f"Error calculating moving averages: {str(e)}")
+        logger.error(f"Error calculating moving averages: {str(e)}")
     
     # RSI
     try:
         data['RSI'] = ta.momentum.rsi(close_series, window=14)
     except Exception as e:
-        quantum_logger.logger.error(f"Error calculating RSI: {str(e)}")
+        logger.error(f"Error calculating RSI: {str(e)}")
     
     # MACD
     try:
@@ -770,7 +200,7 @@ def calculate_technical_indicators(data):
         data['MACD_Signal'] = macd.macd_signal()
         data['MACD_Hist'] = macd.macd_diff()
     except Exception as e:
-        quantum_logger.logger.error(f"Error calculating MACD: {str(e)}")
+        logger.error(f"Error calculating MACD: {str(e)}")
     
     # Bollinger Bands
     try:
@@ -779,14 +209,14 @@ def calculate_technical_indicators(data):
         data['BB_Lower'] = bollinger.bollinger_lband()
         data['BB_Width'] = bollinger.bollinger_hband() - bollinger.bollinger_lband()
     except Exception as e:
-        quantum_logger.logger.error(f"Error calculating Bollinger Bands: {str(e)}")
+        logger.error(f"Error calculating Bollinger Bands: {str(e)}")
     
     # Volatility
     try:
         returns = close_series.pct_change()
         data['Volatility'] = returns.rolling(window=20).std() * np.sqrt(252)
     except Exception as e:
-        quantum_logger.logger.error(f"Error calculating volatility: {str(e)}")
+        logger.error(f"Error calculating volatility: {str(e)}")
     
     # Lagged returns
     for i in [1, 3, 5, 7]:
@@ -798,29 +228,29 @@ def calculate_technical_indicators(data):
 @st.cache_resource(show_spinner=False)
 def load_sentiment_model():
     """Load and cache the sentiment analysis model with fallbacks"""
-    quantum_logger.logger.info("Loading sentiment model")
+    logger.info("Loading sentiment model")
     try:
         # Try to load the finbert model
         return pipeline("sentiment-analysis", model="ProsusAI/finbert")
     except Exception as e:
-        quantum_logger.logger.error(f"Failed to load finbert model: {str(e)}")
+        logger.error(f"Failed to load finbert model: {str(e)}")
         # Fallback to another financial sentiment model
-        quantum_logger.logger.info("Using alternative financial sentiment model")
+        logger.info("Using alternative financial sentiment model")
         try:
             return pipeline("sentiment-analysis", model="mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis")
         except Exception as e2:
-            quantum_logger.logger.error(f"Failed to load alternative model: {str(e2)}")
+            logger.error(f"Failed to load alternative model: {str(e2)}")
             # Fallback to a general sentiment model
-            quantum_logger.logger.info("Using general sentiment model as fallback")
+            logger.info("Using general sentiment model as fallback")
             return pipeline("sentiment-analysis")
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_news(ticker):
     """Fetch news articles related to a stock ticker"""
-    quantum_logger.logger.info(f"Fetching news for {ticker}")
+    logger.info(f"Fetching news for {ticker}")
     api_key = os.getenv("NEWS_API_KEY") or st.secrets.get("NEWS_API_KEY")
     if not api_key:
-        quantum_logger.logger.error("News API key not found")
+        logger.error("News API key not found")
         st.error("News API key not configured. News features disabled.")
         return []
     
@@ -862,7 +292,7 @@ def get_news(ticker):
         data = response.json()
         
         if data.get("status") != "ok":
-            quantum_logger.logger.error(f"News API error: {data.get('message', 'Unknown error')}")
+            logger.error(f"News API error: {data.get('message', 'Unknown error')}")
             return []
             
         return [
@@ -875,7 +305,7 @@ def get_news(ticker):
             } for a in data.get("articles", [])
         ]
     except Exception as e:
-        quantum_logger.logger.error(f"News error: {e}")
+        logger.error(f"News error: {e}")
         return []
 
 # Module 4: Forecasting
@@ -929,508 +359,6 @@ def prophet_forecast(data, forecast_days, country='IN'):
     forecast = model.predict(future)
     return model, forecast
 
-# Model Performance & Accuracy - Enhanced forecasting with ensemble methods
-class EnhancedForecaster:
-    def __init__(self):
-        self.models = {}
-        self.feature_importance = {}
-        self.performance_metrics = {}
-    
-    def create_features(self, data, lookback=30):
-        """Create comprehensive feature set"""
-        features = pd.DataFrame(index=data.index)
-        
-        # Price features
-        features['close'] = data['Close']
-        features['returns'] = data['Close'].pct_change()
-        features['log_returns'] = np.log(data['Close']/data['Close'].shift(1))
-        
-        # Technical indicators
-        for window in [5, 10, 20, 50]:
-            features[f'sma_{window}'] = data['Close'].rolling(window).mean()
-            features[f'std_{window}'] = data['Close'].rolling(window).std()
-            features[f'rsi_{window}'] = ta.momentum.rsi(data['Close'], window=window)
-        
-        # Lag features
-        for lag in range(1, lookback + 1):
-            features[f'lag_{lag}'] = data['Close'].shift(lag)
-            if lag <= 5:
-                features[f'return_lag_{lag}'] = features['returns'].shift(lag)
-        
-        # Volume features
-        if 'Volume' in data.columns:
-            features['volume'] = data['Volume']
-            features['volume_sma'] = data['Volume'].rolling(20).mean()
-            features['volume_ratio'] = data['Volume'] / features['volume_sma']
-        
-        # Calendar features
-        features['day_of_week'] = features.index.dayofweek
-        features['month'] = features.index.month
-        features['quarter'] = features.index.quarter
-        
-        return features.dropna()
-    
-    def train_ensemble_model(self, data, target_days=30):
-        """Train ensemble of models"""
-        features = self.create_features(data)
-        
-        # Prepare target variable (future returns)
-        target = features['close'].shift(-target_days) / features['close'] - 1
-        
-        # Remove rows with NaN target
-        mask = ~target.isna()
-        X = features[mask].select_dtypes(include=[np.number])
-        y = target[mask]
-        
-        if len(X) < 100:
-            raise ValueError("Insufficient data for training")
-        
-        # Train-test split
-        split_idx = int(len(X) * 0.8)
-        X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-        y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-        
-        # Define models
-        models = {
-            'rf': RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1),
-            'xgb': xgb.XGBRegressor(n_estimators=100, random_state=42, n_jobs=-1),
-            'linear': LinearRegression()
-        }
-        
-        # Train individual models
-        trained_models = {}
-        for name, model in models.items():
-            try:
-                model.fit(X_train.fillna(0), y_train)
-                trained_models[name] = model
-                
-                # Calculate performance
-                y_pred = model.predict(X_test.fillna(0))
-                mape = mean_absolute_percentage_error(y_test, y_pred)
-                self.performance_metrics[name] = mape
-                
-                # Feature importance for tree-based models
-                if hasattr(model, 'feature_importances_'):
-                    importance_df = pd.DataFrame({
-                        'feature': X_train.columns,
-                        'importance': model.feature_importances_
-                    }).sort_values('importance', ascending=False)
-                    self.feature_importance[name] = importance_df
-                    
-            except Exception as e:
-                warnings.warn(f"Failed to train {name}: {str(e)}")
-                continue
-        
-        # Create ensemble
-        if len(trained_models) >= 2:
-            ensemble = VotingRegressor(
-                estimators=[(name, model) for name, model in trained_models.items()]
-            )
-            ensemble.fit(X_train.fillna(0), y_train)
-            
-            # Ensemble performance
-            y_pred_ensemble = ensemble.predict(X_test.fillna(0))
-            ensemble_mape = mean_absolute_percentage_error(y_test, y_pred_ensemble)
-            self.performance_metrics['ensemble'] = ensemble_mape
-            
-            self.models['ensemble'] = ensemble
-            self.models['feature_columns'] = X_train.columns
-            
-            return ensemble, self.performance_metrics
-        else:
-            raise ValueError("Failed to train sufficient models for ensemble")
-    
-    def predict(self, data, horizon=30):
-        """Make predictions using trained ensemble"""
-        if 'ensemble' not in self.models:
-            raise ValueError("No trained model available")
-        
-        features = self.create_features(data)
-        X = features.select_dtypes(include=[np.number])
-        X = X[self.models['feature_columns']].fillna(0)
-        
-        # Predict future returns
-        predicted_returns = self.models['ensemble'].predict(X.iloc[-horizon:])
-        
-        # Convert to price predictions
-        current_price = data['Close'].iloc[-1]
-        predicted_prices = current_price * (1 + predicted_returns)
-        
-        return predicted_prices, predicted_returns
-
-# Usage example
-@st.cache_resource
-def get_enhanced_forecaster():
-    return EnhancedForecaster()
-
-def enhanced_forecast_tab(data, forecast_days):
-    """Enhanced forecasting tab"""
-    st.subheader("🤖 Enhanced ML Forecasting")
-    
-    forecaster = get_enhanced_forecaster()
-    
-    try:
-        with st.spinner("Training ensemble models..."):
-            model, metrics = forecaster.train_ensemble_model(data, forecast_days)
-        
-        # Display model performance
-        st.subheader("Model Performance (MAPE)")
-        perf_df = pd.DataFrame.from_dict(metrics, orient='index', columns=['MAPE'])
-        perf_df['MAPE'] = perf_df['MAPE'].apply(lambda x: f"{x:.2%}")
-        st.dataframe(perf_df)
-        
-        # Feature importance
-        if 'rf' in forecaster.feature_importance:
-            st.subheader("Feature Importance (Random Forest)")
-            fig_importance = px.bar(
-                forecaster.feature_importance['rf'].head(15),
-                x='importance', y='feature',
-                orientation='h',
-                title='Top 15 Most Important Features'
-            )
-            fig_importance.update_layout(template='plotly_dark')
-            st.plotly_chart(fig_importance, use_container_width=True)
-        
-        # Make predictions
-        predicted_prices, predicted_returns = forecaster.predict(data, forecast_days)
-        
-        # Visualization
-        fig_pred = go.Figure()
-        
-        # Historical prices
-        fig_pred.add_trace(go.Scatter(
-            x=data.index[-100:],  # Last 100 days
-            y=data['Close'].iloc[-100:],
-            mode='lines',
-            name='Historical',
-            line=dict(color='blue')
-        ))
-        
-        # Predictions
-        future_dates = pd.date_range(
-            start=data.index[-1] + pd.Timedelta(days=1),
-            periods=len(predicted_prices),
-            freq='D'
-        )
-        
-        fig_pred.add_trace(go.Scatter(
-            x=future_dates,
-            y=predicted_prices,
-            mode='lines',
-            name='ML Prediction',
-            line=dict(color='red', dash='dash')
-        ))
-        
-        fig_pred.update_layout(
-            title='Enhanced ML Forecast',
-            xaxis_title='Date',
-            yaxis_title='Price',
-            template='plotly_dark'
-        )
-        st.plotly_chart(fig_pred, use_container_width=True)
-        
-        # Prediction confidence
-        avg_return = predicted_returns.mean()
-        return_std = predicted_returns.std()
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Predicted Avg Return", f"{avg_return:.2%}")
-        col2.metric("Prediction Volatility", f"{return_std:.2%}")
-        col3.metric("Confidence Score", f"{max(0, 100-metrics.get('ensemble', 0.5)*100):.0f}%")
-        
-    except Exception as e:
-        st.error(f"Enhanced forecasting failed: {str(e)}")
-        st.info("Falling back to Prophet model")
-
-# Risk Management Enhancements
-def calculate_risk_metrics(data, returns):
-    """Calculate comprehensive risk metrics"""
-    metrics = {}
-    
-    # Value at Risk (VaR)
-    metrics['var_95'] = np.percentile(returns, 5)
-    metrics['var_99'] = np.percentile(returns, 1)
-    
-    # Expected Shortfall (CVaR)
-    var_95 = metrics['var_95']
-    metrics['cvar_95'] = returns[returns <= var_95].mean()
-    
-    # Maximum Drawdown
-    cumulative = (1 + returns).cumprod()
-    rolling_max = cumulative.expanding().max()
-    drawdown = (cumulative - rolling_max) / rolling_max
-    metrics['max_drawdown'] = drawdown.min()
-    
-    # Calmar Ratio
-    annual_return = (1 + returns).prod() ** (252/len(returns)) - 1
-    metrics['calmar_ratio'] = annual_return / abs(metrics['max_drawdown'])
-    
-    return metrics
-
-# Real-time Data Integration
-class RealTimeDataHandler:
-    def __init__(self):
-        self.data_queue = queue.Queue()
-        self.is_connected = False
-        self.ws = None
-        self.callbacks = []
-    
-    def add_callback(self, callback):
-        """Add callback for real-time data updates"""
-        self.callbacks.append(callback)
-    
-    def on_message(self, ws, message):
-        """Handle incoming WebSocket messages"""
-        try:
-            data = json.loads(message)
-            # Process the data
-            processed_data = self.process_market_data(data)
-            
-            # Add to queue
-            self.data_queue.put(processed_data)
-            
-            # Notify callbacks
-            for callback in self.callbacks:
-                callback(processed_data)
-                
-        except Exception as e:
-            st.error(f"Error processing real-time data: {e}")
-    
-    def on_error(self, ws, error):
-        """Handle WebSocket errors"""
-        st.error(f"WebSocket error: {error}")
-        self.is_connected = False
-    
-    def on_close(self, ws, close_status_code, close_msg):
-        """Handle WebSocket close"""
-        st.warning("Real-time connection closed")
-        self.is_connected = False
-    
-    def on_open(self, ws):
-        """Handle WebSocket open"""
-        st.success("Real-time connection established")
-        self.is_connected = True
-        
-        # Subscribe to symbols
-        subscribe_message = {
-            "action": "subscribe",
-            "symbols": ["NIFTY", "SENSEX", "BANKNIFTY"]
-        }
-        ws.send(json.dumps(subscribe_message))
-    
-    def connect(self, url="wss://your-websocket-url"):
-        """Connect to real-time data feed"""
-        try:
-            self.ws = websocket.WebSocketApp(
-                url,
-                on_open=self.on_open,
-                on_message=self.on_message,
-                on_error=self.on_error,
-                on_close=self.on_close
-            )
-            
-            # Run in separate thread
-            ws_thread = Thread(target=self.ws.run_forever)
-            ws_thread.daemon = True
-            ws_thread.start()
-            
-        except Exception as e:
-            st.error(f"Failed to connect to real-time feed: {e}")
-    
-    def process_market_data(self, raw_data):
-        """Process raw market data"""
-        try:
-            return {
-                'symbol': raw_data.get('symbol'),
-                'price': float(raw_data.get('price', 0)),
-                'volume': int(raw_data.get('volume', 0)),
-                'timestamp': pd.Timestamp.now(),
-                'change': float(raw_data.get('change', 0)),
-                'change_percent': float(raw_data.get('change_percent', 0))
-            }
-        except Exception as e:
-            st.error(f"Data processing error: {e}")
-            return None
-    
-    def get_latest_data(self):
-        """Get latest data from queue"""
-        data_points = []
-        while not self.data_queue.empty():
-            try:
-                data_points.append(self.data_queue.get_nowait())
-            except queue.Empty:
-                break
-        return data_points
-    
-    def disconnect(self):
-        """Disconnect from real-time feed"""
-        if self.ws:
-            self.ws.close()
-            self.is_connected = False
-
-# Real-time dashboard component
-def create_realtime_dashboard():
-    """Create real-time monitoring dashboard"""
-    
-    # Initialize real-time handler
-    if 'rt_handler' not in st.session_state:
-        st.session_state.rt_handler = RealTimeDataHandler()
-    
-    rt_handler = st.session_state.rt_handler
-    
-    # Connection controls
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("Connect to Live Feed"):
-            rt_handler.connect()
-    
-    with col2:
-        if st.button("Disconnect"):
-            rt_handler.disconnect()
-    
-    with col3:
-        status = "🟢 Connected" if rt_handler.is_connected else "🔴 Disconnected"
-        st.write(f"Status: {status}")
-    
-    # Real-time data display
-    if rt_handler.is_connected:
-        # Create placeholder for real-time updates
-        placeholder = st.empty()
-        
-        # Get latest data
-        latest_data = rt_handler.get_latest_data()
-        
-        if latest_data:
-            # Display real-time metrics
-            with placeholder.container():
-                st.subheader("Live Market Data")
-                
-                cols = st.columns(len(latest_data))
-                for i, data_point in enumerate(latest_data):
-                    if data_point:
-                        with cols[i % len(cols)]:
-                            change_color = "🟢" if data_point['change'] >= 0 else "🔴"
-                            st.metric(
-                                label=f"{change_color} {data_point['symbol']}",
-                                value=f"₹{data_point['price']:.2f}",
-                                delta=f"{data_point['change_percent']:.2f}%"
-                            )
-        
-        # Auto-refresh every 5 seconds
-        if st.button("Auto-refresh ON/OFF"):
-            st.rerun()
-
-# Alert system integration
-class SmartAlertSystem:
-    def __init__(self):
-        self.alerts = []
-        self.conditions = {}
-    
-    def add_price_alert(self, symbol, condition, threshold, message):
-        """Add price-based alert"""
-        alert = {
-            'id': len(self.alerts) + 1,
-            'symbol': symbol,
-            'type': 'price',
-            'condition': condition,  # 'above', 'below'
-            'threshold': threshold,
-            'message': message,
-            'active': True,
-            'triggered': False
-        }
-        self.alerts.append(alert)
-        return alert['id']
-    
-    def add_technical_alert(self, symbol, indicator, condition, threshold, message):
-        """Add technical indicator alert"""
-        alert = {
-            'id': len(self.alerts) + 1,
-            'symbol': symbol,
-            'type': 'technical',
-            'indicator': indicator,  # 'rsi', 'macd', etc.
-            'condition': condition,
-            'threshold': threshold,
-            'message': message,
-            'active': True,
-            'triggered': False
-        }
-        self.alerts.append(alert)
-        return alert['id']
-    
-    def check_alerts(self, market_data, technical_data):
-        """Check all active alerts"""
-        triggered_alerts = []
-        
-        for alert in self.alerts:
-            if not alert['active'] or alert['triggered']:
-                continue
-            
-            should_trigger = False
-            
-            if alert['type'] == 'price':
-                current_price = market_data.get('price', 0)
-                if alert['condition'] == 'above' and current_price > alert['threshold']:
-                    should_trigger = True
-                elif alert['condition'] == 'below' and current_price < alert['threshold']:
-                    should_trigger = True
-            
-            elif alert['type'] == 'technical':
-                indicator_value = technical_data.get(alert['indicator'], 0)
-                if alert['condition'] == 'above' and indicator_value > alert['threshold']:
-                    should_trigger = True
-                elif alert['condition'] == 'below' and indicator_value < alert['threshold']:
-                    should_trigger = True
-            
-            if should_trigger:
-                alert['triggered'] = True
-                alert['triggered_at'] = pd.Timestamp.now()
-                triggered_alerts.append(alert)
-                
-                # Send notification
-                self.send_notification(alert)
-        
-        return triggered_alerts
-    
-    def send_notification(self, alert):
-        """Send alert notification"""
-        try:
-            # Email notification
-            st.success(f"🚨 ALERT: {alert['message']}")
-            
-            # You can add more notification channels here
-            # - Telegram bot
-            # - Discord webhook
-            # - SMS via Twilio
-            # - Push notifications
-            
-        except Exception as e:
-            st.error(f"Failed to send alert: {e}")
-    
-    def get_active_alerts(self):
-        """Get all active alerts"""
-        return [alert for alert in self.alerts if alert['active']]
-    
-    def remove_alert(self, alert_id):
-        """Remove an alert"""
-        self.alerts = [alert for alert in self.alerts if alert['id'] != alert_id]
-
-# Performance & Scalability
-class AsyncDataFetcher:
-    def __init__(self, max_workers=5):
-        self.session = None
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
-    
-    async def fetch_multiple_stocks(self, tickers, start_date, end_date):
-        """Fetch multiple stocks concurrently"""
-        tasks = []
-        for ticker in tickers:
-            task = asyncio.create_task(self.fetch_stock_async(ticker, start_date, end_date))
-            tasks.append(task)
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return dict(zip(tickers, results))
-
 # Module 5: Portfolio Optimization
 @st.cache_data(ttl=3600, show_spinner=False)
 def prepare_portfolio_data(tickers, start_date, end_date):
@@ -1440,11 +368,11 @@ def prepare_portfolio_data(tickers, start_date, end_date):
         try:
             df = yf.download(ticker, start=start_date - timedelta(days=60), end=end_date + timedelta(days=1))
             if df.empty:
-                quantum_logger.logger.warning(f"No data for {ticker}, skipping...")
+                logger.warning(f"No data for {ticker}, skipping...")
                 continue
             price_data[ticker] = df['Close']
         except Exception as e:
-            quantum_logger.logger.error(f"Error loading {ticker}: {str(e)}")
+            logger.error(f"Error loading {ticker}: {str(e)}")
             continue
 
     if not price_data:
@@ -1477,7 +405,7 @@ def optimize_portfolio(returns, risk_tolerance):
         prob.solve()
         return w.value
     except Exception as e:
-        quantum_logger.logger.error(f"Optimization failed: {str(e)}")
+        logger.error(f"Optimization failed: {str(e)}")
         return np.ones(n) / n
 
 # Module 6: Backtesting
@@ -1634,7 +562,7 @@ class RealTimeMonitor:
             recipient = os.getenv('ALERT_RECIPIENT')
             
             if not all([smtp_server, smtp_user, smtp_password, recipient]):
-                quantum_logger.logger.warning("Alert configuration incomplete")
+                logger.warning("Alert configuration incomplete")
                 return
             
             msg = MIMEMultipart()
@@ -1654,16 +582,16 @@ class RealTimeMonitor:
                 server.login(smtp_user, smtp_password)
                 server.send_message(msg)
                 
-            quantum_logger.logger.info(f"Alert sent: {message}")
+            logger.info(f"Alert sent: {message}")
         except Exception as e:
-            quantum_logger.logger.error(f"Failed to send alert: {str(e)}")
+            logger.error(f"Failed to send alert: {str(e)}")
     
     def cache_data(self, key, value, ttl=3600):
         """Cache data in Redis"""
         try:
             self.redis.setex(key, ttl, json.dumps(value))
         except Exception as e:
-            quantum_logger.logger.error(f"Redis cache error: {str(e)}")
+            logger.error(f"Redis cache error: {str(e)}")
     
     def get_cached_data(self, key):
         """Retrieve cached data from Redis"""
@@ -1671,7 +599,7 @@ class RealTimeMonitor:
             data = self.redis.get(key)
             return json.loads(data) if data else None
         except Exception as e:
-            quantum_logger.logger.error(f"Redis get error: {str(e)}")
+            logger.error(f"Redis get error: {str(e)}")
             return None
 
 # ------------------ UTILITY FUNCTIONS ------------------
@@ -2067,7 +995,7 @@ CUSTOM_CSS = """
         color: white !important;
         border-radius: 30px !important;
         font-weight: 600 !important;
-        padding: 10px 25px !important;
+        padding: 10极 25px !important;
         border: none !important;
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
         transition: all 0.3s ease;
@@ -2084,7 +1012,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b极d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -2144,7 +1072,7 @@ CUSTOM_CSS = """
     
     .negative {
         border-left: 6px solid var(--danger);
-        background: linear-gradient(135deg, rgba(244, 67, 54, 0.3), var(--vibrant-green));
+        background: linear-gradient(135极deg, rgba(244, 67, 54, 0.3), var(--vibrant-green));
     }
     
     .neutral {
@@ -2170,7 +1098,7 @@ CUSTOM_CSS = """
         padding: 25px;
         margin: 20px 0;
         border: 1px solid var(--card-border);
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 极.1);
         transition: all 0.4s ease;
         backdrop-filter: blur(10px);
         animation: cardAppear 0.8s ease-out;
@@ -2196,7 +1124,7 @@ CUSTOM_CSS = """
     
     @keyframes cardAppear {
         0% { opacity: 0; transform: scale(0.95); }
-        100% { opacity: 1; transform: scale(1); }
+        100% { opacity: 极; transform: scale(1); }
     }
     
     .feature-card:hover {
@@ -2262,7 +1190,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #极d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -2329,7 +1257,7 @@ CUSTOM_CSS = """
     }
     
     .ai-response {
-        background: linear-gradient(135deg, var(--vibrant-teal), var(--vibrant-cyan));
+        background: linear-gradient(135deg, var(--vibrant-teal极), var(--vibrant-cyan));
         padding: 25px;
         border-radius: 15px;
         margin-top: 20px;
@@ -2395,7 +1323,7 @@ CUSTOM_CSS = """
     .strategy-card h4 {
         color: var(--accent);
         font-size: 1.5rem;
-        margin-bottom: 15px;
+        margin-bottom: 15极;
     }
     
     .macro-metric {
@@ -2443,9 +1371,9 @@ CUSTOM_CSS = """
     .options-payoff {
         background: linear-gradient(135deg, var(--vibrant-teal), var(--vibrant-orange));
         border-radius: 15px;
-        padding: 25px;
+        padding极: 25px;
         margin: 20px 0;
-        border: 1px solid var(--card-border);
+        border: 1px solid var(--极ard-border);
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
         backdrop-filter: blur(10px);
         position: relative;
@@ -2475,7 +1403,7 @@ CUSTOM_CSS = """
         position: relative;
         overflow: hidden;
         z-index: 1;
- }
+    }
     
     .stAlert::before {
         content: '';
@@ -2543,7 +1471,7 @@ def main():
     default_tickers = [
         "NTPC.NS", "VMM.NS", "SAGILITY.NS", "TATAMOTORS.NS",
         "TCS.NS", "SBIN.NS", "KALYANKJIL.NS", "SWANENERGY.NS", "PRAJIND.NS",
-        "RELIANCE.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", "HINDUNILVR.NS",
+        "RELIANCE.NS", "HDFCBANK.NS", "INFY.极", "ICICIBANK.NS", "HINDUNILVR.NS",
         "BAJFINANCE.NS", "LT.NS", "AXISBANK.NS", "ADANIENT.NS", "BHARTIARTL.NS",
         "HCLTECH.NS", "KOTAKBANK.NS", "ITC.NS", "ASIANPAINT.NS", "MARUTI.NS",
         "TITAN.NS", "SUNPHARMA.NS"
@@ -2595,8 +1523,8 @@ def main():
     data = calculate_technical_indicators(data)
 
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-        "🏠 Home", "📈 Market Data", "🔮 Forecasting", "🤖 ML Forecasting", "📰 Sentiment", 
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "🏠 Home", "📈 Market Data", "🔮 Forecasting", "📰 Sentiment", 
         "💼 Portfolio", "🤖 AI Assistant", "🧪 Strategy", "🚀 Real-Time"
     ])
 
@@ -2672,7 +1600,7 @@ def main():
                 <h4>🔮 Hybrid Forecasting</h4>
                 <ul>
                     <li>Prophet time-series forecasting</li>
-                    <li>Lightweight trend + volatility model</li>
+                    <li>Lightweight trend + volatility model</极i>
                     <li>Confidence interval projections</li>
                     <li>Risk assessment metrics</li>
                 </ul>
@@ -2732,7 +1660,7 @@ def main():
                     <li>CVXPY Optimization</li>
                 </ul>
                 <p><strong>Real-Time Data</strong></p>
-                <ul style="text-align:left;">
+                <ul style极="text-align:left;">
                     <li>Yahoo Finance API</li>
                     <li>NewsAPI Integration</li>
                     <li>Streamlit Live Updates</li>
@@ -2875,7 +1803,7 @@ def main():
                     
                     prices, payoff = create_options_payoff(strike, premium, 'call', contracts)
                     fig_call = go.Figure()
-                    fig_call.add_race(go.Scatter(x=prices, y=payoff, mode='lines', name='Call Payoff'))
+                    fig_call.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Call Payoff'))
                     fig_call.update_layout(
                         title='Call Option Payoff Diagram',
                         xaxis_title='Stock Price',
@@ -3010,12 +1938,8 @@ def main():
             except Exception as e:
                 st.error(f"Simple forecasting error: {str(e)}")
 
-    # ML Forecasting Tab
-    with tab4:
-        enhanced_forecast_tab(data, forecast_days)
-
     # Sentiment Analysis Tab
-    with tab5:
+    with tab4:
         st.markdown('<div class="subheader">Sentiment Analysis</div>', unsafe_allow_html=True)
         
         news_items = get_news(ticker)
@@ -3041,7 +1965,7 @@ def main():
                 try:
                     sentiments.extend(sentiment_model(batch))
                 except Exception as e:
-                    quantum_logger.logger.error(f"Sentiment error: {str(e)}")
+                    logger.error(f"Sentiment error: {str(e)}")
                     # Add neutral sentiment as fallback
                     sentiments.extend([{'label': 'NEUTRAL', 'score': 0.5}] * len(batch))
             
@@ -3142,7 +2066,7 @@ def main():
                 fig_earn.add_trace(go.Bar(
                     x=earnings_data.index,
                     y=earnings_data['Surprise (%)'],
-                    name='earnings Surprise',
+                    name='Earnings Surprise',
                     marker_color=np.where(earnings_data['Surprise (%)'] > 0, 'green', 'red')
                 ))
                 fig_earn.update_layout(
@@ -3154,7 +2078,7 @@ def main():
                 st.plotly_chart(fig_earn, use_container_width=True)
 
     # Portfolio Optimization Tab
-    with tab6:
+    with tab5:
         st.markdown('<div class="subheader">Portfolio Optimization</div>', unsafe_allow_html=True)
         portfolio_data = prepare_portfolio_data(portfolio_tickers, start_date, end_date)
 
@@ -3236,7 +2160,7 @@ def main():
                 lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
             )
             return_df['Actual Return'] = return_df['Actual Return'].apply(
-                lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
+                lambda x:f"{x:.2f}%" if isinstance(x, (int, float)) else str(x)
             )
             
             st.dataframe(return_df)
@@ -3260,16 +2184,6 @@ def main():
                 template='plotly_dark'
             )
             st.plotly_chart(fig_corr, use_container_width=True)
-            
-            # Risk metrics
-            st.subheader("Portfolio Risk Metrics")
-            risk_metrics = calculate_risk_metrics(portfolio_data, returns)
-            
-            col_risk1, col_risk2, col_risk3, col_risk4 = st.columns(4)
-            col_risk1.metric("VaR (95%)", f"{risk_metrics['var_95']:.2%}")
-            col_risk2.metric("CVaR (95%)", f"{risk_metrics['cvar_95']:.2%}")
-            col_risk3.metric("Max Drawdown", f"{risk_metrics['max_drawdown']:.2%}")
-            col_risk4.metric("Calmar Ratio", f"{risk_metrics['calmar_ratio']:.2f}")
             
             # Macroeconomic Dashboard
             st.subheader("Macroeconomic Dashboard")
@@ -3346,7 +2260,7 @@ def main():
             """, unsafe_allow_html=True)
 
     # AI Assistant Tab
-    with tab7:
+    with tab6:
         st.markdown('<div class="header">🤖 AI Investment Assistant</div>', unsafe_allow_html=True)
         st.markdown('<div class="subheader">Get insights and recommendations powered by AI</div>', unsafe_allow_html=True)
         
@@ -3416,7 +2330,7 @@ def main():
         
 
     # Strategy Tester Tab
-    with tab8:
+    with tab7:
         st.markdown('<div class="header">🧪 Strategy Backtesting</div>', unsafe_allow_html=True)
         st.markdown('<div class="subheader">Test trading strategies with historical data</div>', unsafe_allow_html=True)
         
@@ -3533,7 +2447,7 @@ def main():
                 st.dataframe(trades_df)
 
     # Real-Time Monitoring Tab
-    with tab9:
+    with tab8:
         st.markdown('<div class="header">🚀 Real-Time Dashboard</div>', unsafe_allow_html=True)
         st.markdown('<div class="subheader">Live market monitoring and predictions</div>', unsafe_allow_html=True)
         
@@ -3553,9 +2467,6 @@ def main():
         st.subheader("Real-Time Price Movement")
         # Placeholder for real-time chart
         st.info("Real-time chart integration requires WebSocket connection to market data API")
-        
-        # Create real-time dashboard
-        create_realtime_dashboard()
         
         # Model monitoring
         st.subheader("Model Performance Monitoring")
@@ -3580,14 +2491,6 @@ def main():
         col_status1.metric("Data API", "Connected", "OK")
         col_status2.metric("Model Serving", "Active", "OK")
         col_status3.metric("Prediction Latency", "120ms")
-        
-        # Health check
-        st.subheader("System Health")
-        health_status = health_checker.run_checks()
-        
-        for check_name, check_result in health_status['checks'].items():
-            status_icon = "🟢" if check_result['status'] == 'healthy' else "🟡" if check_result['status'] == 'unhealthy' else "🔴"
-            st.write(f"{status_icon} {check_name}: {check_result['status']}")
         
         # Retraining status
         st.subheader("Model Retraining")
