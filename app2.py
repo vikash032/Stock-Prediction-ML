@@ -504,7 +504,7 @@ def monitor_performance(threshold_ms: int = 1000):
             # Log slow operations
             if duration_ms > threshold_ms:
                 quantum_logger.logger.warning(
-                    f"Slow operation detected: {func.__name__} took {duration_ms:.2f极ms",
+                    f"Slow operation detected: {func.__name__} took {duration_ms:.2f}ms",
                     extra={
                         'function': func.__name__,
                         'duration_ms': duration_ms,
