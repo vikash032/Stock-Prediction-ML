@@ -312,7 +312,7 @@ class CircuitBreaker:
             return result
             
         except Exception as e:
-            self._极_failure()
+            self._failure()
             raise e
     
     def _should_attempt_reset(self) -> bool:
@@ -364,7 +364,7 @@ class SmartCache:
             'created': datetime.now()
         }
     
-    def invalidate_pattern(self, pattern:极) -> int:
+    def invalidate_pattern(self, pattern:str) -> int:
         """Invalidate cache entries matching pattern"""
         removed = 0
         keys_to_remove = []
