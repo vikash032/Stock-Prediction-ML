@@ -903,7 +903,7 @@ def prophet_forecast(data, forecast_days, country='IN'):
     
     # Add custom seasonalities
     model.add_seasonality(name='monthly', period=30.5, fourier_order=5)
-   极odel.add_seasonality(name='quarterly', period=91.25, fourier_order=7)
+    model.add_seasonality(name='quarterly', period=91.25, fourier_order=7)
     
     # Add technical indicators as regressors
     tech_indicators = ['SMA20', 'SMA50', 'EMA20', 'RSI', 'MACD', 'MACD_Hist', 'BB_Width', 'Volatility']
