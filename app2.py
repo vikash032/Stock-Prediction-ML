@@ -460,7 +460,7 @@ class HealthChecker:
         if critical_failures > 0:
             results['overall_status'] = 'critical'
         elif any(check['status'] != 'healthy' for check in results['checks'].values()):
-            results['overall_status'degraded'
+            results['overall_status' ] = 'degraded'
         
         return results
 
