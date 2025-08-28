@@ -595,7 +595,7 @@ def main():
         st.plotly_chart(plot_stock_data(data, ticker), use_container_width=True)
     
     # Technical Analysis Tab
-with tab2:
+    with tab2:
         st.header("Technical Analysis")
     
         # Display technical indicators
