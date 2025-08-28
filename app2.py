@@ -41,7 +41,9 @@ def get_stock_data(ticker, start, end):
     """Fetch stock data from Yahoo Finance"""
     try:
         logger.info(f"Fetching data for {ticker} from {start} to {end}")
-        data = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+        # Extend the start date to ensure we have enough data for calculations
+        extended_start = start - timedelta(days=60)
+        data = yf.download(ticker, start=extended_start, end=end, progress=False, auto_adjust=True)
         
         if data.empty:
             logger.warning(f"No data found for {ticker}")
@@ -495,14 +497,21 @@ def main():
         
         # Display basic metrics
         col1, col2, col3, col4 = st.columns(4)
-        current_price = data['Close'].iloc[-1]
-        prev_price = data['Close'].iloc[-2] if len(data) > 1 else current_price
+        
+        # Ensure we're working with scalar values
+        current_price = float(data['Close'].iloc[-1]) if not data.empty else 0
+        prev_price = float(data['Close'].iloc[-2]) if len(data) > 1 else current_price
+        
         daily_change = ((current_price - prev_price) / prev_price * 100) if prev_price != 0 else 0
+        
+        # Get volatility and RSI values safely
+        volatility_value = float(data['Volatility'].iloc[-1]) if 'Volatility' in data.columns and not data['Volatility'].empty else 0
+        rsi_value = float(data['RSI'].iloc[-1]) if 'RSI' in data.columns and not data['RSI'].empty else 0
         
         col1.metric("Current Price", f"${current_price:.2f}")
         col2.metric("Daily Change", f"{daily_change:.2f}%")
-        col3.metric("30-Day Volatility", f"{data['Volatility'].iloc[-1]*100:.2f}%" if 'Volatility' in data.columns else "N/A")
-        col4.metric("RSI", f"{data['RSI'].iloc[-1]:.2f}" if 'RSI' in data.columns else "N/A")
+        col3.metric("30-Day Volatility", f"{volatility_value*100:.2f}%" if volatility_value else "N/A")
+        col4.metric("RSI", f"{rsi_value:.2f}" if rsi_value else "N/A")
         
         # Display raw data
         st.subheader("Raw Data")
@@ -727,8 +736,8 @@ def main():
         
         # Create context from stock data
         if not data.empty:
-            current_price = data['Close'].iloc[-1]
-            price_change = ((current_price - data['Close'].iloc[0]) / data['Close'].iloc[0] * 100) if len(data) > 1 else 0
+            current_price = float(data['Close'].iloc[-1]) if not data.empty else 0
+            price_change = ((current_price - float(data['Close'].iloc[0])) / float(data['Close'].iloc[0]) * 100) if len(data) > 1 else 0
             
             context = f"""
             Stock: {ticker}
@@ -736,10 +745,10 @@ def main():
             Overall Change: {price_change:.2f}%
             """
             
-            if 'RSI' in data.columns:
-                context += f"RSI: {data['RSI'].iloc[-1]:.2f}\n"
-            if 'Volatility' in data.columns:
-                context += f"Volatility: {data['Volatility'].iloc[-1]*100:.2f}%\n"
+            if 'RSI' in data.columns and not data['RSI'].empty:
+                context += f"RSI: {float(data['RSI'].iloc[-1]):.2f}\n"
+            if 'Volatility' in data.columns and not data['Volatility'].empty:
+                context += f"Volatility: {float(data['Volatility'].iloc[-1])*100:.2f}%\n"
         else:
             context = f"Stock: {ticker}"
         
