@@ -20,6 +20,7 @@ holidays
 sentry_sdk
 psutil
 websocket
+groq
 xgboost
 shap
 optuna
