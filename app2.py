@@ -114,7 +114,10 @@ def get_stock_news(ticker, num_articles=5):
         "ADANIPORTS.NS": "Adani Ports",
         "ADANIENT.NS": "Adani Enterprises", 
         "HCLTECH.NS": "HCL Technologies", 
-        "INDUSINDBK.NS": "IndusInd Bank"
+        "INDUSINDBK.NS": "IndusInd Bank",
+        "VMM.NS": "VMM Limited",
+        "SAGILITY.NS": "Sagility Limited",
+        "ETERNAL.NS": "Eternal Limited"
     }
     
     company_name = company_map.get(ticker, ticker.split('.')[0])
@@ -175,7 +178,10 @@ def get_sample_news(ticker, num_articles=5):
         "ADANIPORTS.NS": "Adani Ports",
         "ADANIENT.NS": "Adani Enterprises", 
         "HCLTECH.NS": "HCL Technologies", 
-        "INDUSINDBK.NS": "IndusInd Bank"
+        "INDUSINDBK.NS": "IndusInd Bank",
+        "VMM.NS": "VMM Limited",
+        "SAGILITY.NS": "Sagility Limited",
+        "ETERNAL.NS": "Eternal Limited"
     }
     
     company_name = company_map.get(ticker, ticker.split('.')[0])
@@ -386,19 +392,6 @@ def train_prophet_model(data, forecast_days):
     
     return model, forecast
 
-# ------------------ EVALUATION METRICS ------------------
-def calculate_metrics(y_true, y_pred):
-    """Calculate regression metrics"""
-    mse = mean_squared_error(y_true, y_pred)
-    mae = mean_absolute_error(y_true, y_pred)
-    rmse = np.sqrt(mse)
-    
-    return {
-        'MSE': mse,
-        'MAE': mae,
-        'RMSE': rmse
-    }
-
 # ------------------ VISUALIZATION ------------------
 def plot_stock_data(data, ticker):
     """Plot stock price data with technical indicators"""
@@ -439,61 +432,6 @@ def plot_stock_data(data, ticker):
     
     return fig
 
-def plot_technical_indicators(data):
-    """Plot technical indicators"""
-    fig = go.Figure()
-    
-    # Price and MACD
-    fig.add_trace(go.Scatter(
-        x=data.index, y=data['Close'],
-        mode='lines', name='Close',
-        line=dict(color='#4F8BF9')
-    ))
-    
-    if 'MACD' in data.columns:
-        fig.add_trace(go.Scatter(
-            x=data.index, y=data['MACD'],
-            mode='lines', name='MACD',
-            line=dict(color='#FFA500'),
-            yaxis='y2'
-        ))
-    
-    if 'RSI' in data.columns:
-        fig.add_trace(go.Scatter(
-            x=data.index, y=data['RSI'],
-            mode='lines', name='RSI',
-            line=dict(color='#FF00FF'),
-            yaxis='y3'
-        ))
-    
-    fig.update_layout(
-        title='Technical Indicators',
-        xaxis_title='Date',
-        yaxis_title='Price',
-        yaxis2=dict(
-            title='MACD',
-            overlaying='y',
-            side='right',
-            position=0.85
-        ),
-        yaxis3=dict(
-            title='RSI',
-            overlaying='y',
-            side='right',
-            position=1.0,
-            range=[0, 100]
-        ),
-        template='plotly_dark',
-        height=500,
-        showlegend=True
-    )
-    
-    # Add overbought/oversold lines for RSI
-    fig.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, yref="y3")
-    fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, yref="y3")
-    
-    return fig
-
 # ------------------ MAIN APPLICATION ------------------
 def main():
     st.title("📈 Quantum Stock Prediction - India")
@@ -509,7 +447,8 @@ def main():
         "BAJFINANCE.NS", "BHARTIARTL.NS", "LT.NS", "KOTAKBANK.NS", "AXISBANK.NS",
         "ASIANPAINT.NS", "HINDALCO.NS", "MARUTI.NS", "TITAN.NS", "SUNPHARMA.NS",
         "NTPC.NS", "ONGC.NS", "POWERGRID.NS", "M&M.NS", "ULTRACEMCO.NS",
-        "ADANIPORTS.NS", "ADANIENT.NS", "HCLTECH.NS", "INDUSINDBK.NS"
+        "ADANIPORTS.NS", "ADANIENT.NS", "HCLTECH.NS", "INDUSINDBK.NS",
+        "VMM.NS", "SAGILITY.NS", "ETERNAL.NS"  # Added new stocks
     ]
     
     ticker = st.sidebar.selectbox("Select Stock", indian_stocks, index=0)
@@ -562,7 +501,7 @@ def main():
     data = calculate_technical_indicators(data)
     
     # Create tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Data Overview", "Technical Analysis", "Prediction", "News Sentiment", "AI Assistant"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Data Overview", "Prediction", "News Sentiment", "AI Assistant"])
     
     # Data Overview Tab
     with tab1:
@@ -594,77 +533,8 @@ def main():
         st.subheader("Price Chart")
         st.plotly_chart(plot_stock_data(data, ticker), use_container_width=True)
     
-    # Technical Analysis Tab
-    with tab2:
-        st.header("Technical Analysis")
-    
-        # Display technical indicators
-        st.subheader("Technical Indicators")
-        st.plotly_chart(plot_technical_indicators(data), use_container_width=True)
-    
-        # Feature importance (simplified)
-        st.subheader("Feature Correlation with Price")
-        if len(data) > 30:  # Ensure we have enough data
-            try:
-                # Get numeric data
-                numeric_data = data.select_dtypes(include=[np.number])
-                
-                # Debug: Show what columns we have
-                st.write(f"Available numeric columns: {list(numeric_data.columns)}")
-                
-                # Check if we have enough numeric columns and 'Close' exists
-                if len(numeric_data.columns) < 2:
-                    st.warning("Not enough numeric columns for correlation analysis")
-                elif 'Close' not in numeric_data.columns:
-                    st.warning("Close price column not found in numeric data")
-                    st.write("Available columns:", list(numeric_data.columns))
-                else:
-                    # Remove any columns with all NaN values
-                    numeric_data = numeric_data.dropna(axis=1, how='all')
-                    
-                    # Check for sufficient non-null values
-                    if numeric_data['Close'].isna().all():
-                        st.warning("Close price column contains only null values")
-                    else:
-                        # Calculate correlation matrix
-                        correlation_matrix = numeric_data.corr()
-                        
-                        # Check if correlation was successful
-                        if correlation_matrix is None or correlation_matrix.empty:
-                            st.warning("Could not calculate correlation matrix")
-                        elif 'Close' not in correlation_matrix.columns:
-                            st.warning("Close price not found in correlation matrix")
-                        else:
-                            # Get correlations with Close price
-                            corr = correlation_matrix['Close'].sort_values(ascending=False)
-                            
-                            # Remove price itself from correlation list
-                            corr = corr.drop('Close', errors='ignore')
-                            
-                            # Only show if we have correlations to display
-                            if len(corr) > 0:
-                                fig = px.bar(
-                                    x=corr.values, 
-                                    y=corr.index, 
-                                    orientation='h',
-                                    title='Feature Correlation with Closing Price',
-                                    labels={'x': 'Correlation', 'y': 'Feature'}
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                st.info("No other numeric features available for correlation analysis")
-                                
-            except Exception as e:
-                st.error(f"Error in correlation analysis: {str(e)}")
-                st.write("Data info:")
-                st.write(f"Data shape: {data.shape}")
-                st.write(f"Data columns: {list(data.columns)}")
-                st.write(f"Data types: {data.dtypes}")
-        else:
-            st.warning("Not enough data points (need more than 30) for reliable correlation analysis")
-    
     # Prediction Tab
-    with tab3:
+    with tab2:
         st.header("Price Prediction")
         
         # Model selection
@@ -678,12 +548,18 @@ def main():
                 # Display forecast
                 st.subheader("Prophet Forecast")
                 fig = model.plot(forecast)
-                st.pyplot(fig)
                 
-                # Display components
-                st.subheader("Forecast Components")
-                fig_components = model.plot_components(forecast)
-                st.pyplot(fig_components)
+                # Add actual data to the plot
+                actual_data = go.Scatter(
+                    x=data.index,
+                    y=data['Close'],
+                    mode='lines',
+                    name='Actual',
+                    line=dict(color='blue')
+                )
+                
+                fig.add_trace(actual_data)
+                st.pyplot(fig)
                 
             except Exception as e:
                 st.error(f"Error in Prophet forecasting: {str(e)}")
@@ -716,29 +592,21 @@ def main():
                     # Make predictions
                     y_pred = model.predict(X_test)
                     
-                    # Calculate metrics
-                    metrics = calculate_metrics(y_test, y_pred)
-                    
-                    # Display metrics
-                    st.subheader("Model Performance")
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("RMSE", f"{metrics['RMSE']:.4f}")
-                    col2.metric("MAE", f"{metrics['MAE']:.4f}")
-                    col3.metric("MSE", f"{metrics['MSE']:.4f}")
-                    
                     # Plot predictions vs actual
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(
                         x=np.arange(len(y_test)),
                         y=y_test.values,
                         mode='lines',
-                        name='Actual'
+                        name='Actual',
+                        line=dict(color='blue')
                     ))
                     fig.add_trace(go.Scatter(
                         x=np.arange(len(y_pred)),
                         y=y_pred,
                         mode='lines',
-                        name='Predicted'
+                        name='Predicted',
+                        line=dict(color='red')
                     ))
                     fig.update_layout(
                         title='Actual vs Predicted Price Changes',
@@ -747,26 +615,9 @@ def main():
                         template='plotly_dark'
                     )
                     st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Feature importance
-                    st.subheader("Feature Importance")
-                    if hasattr(model.named_steps['regressor'], 'coef_'):
-                        importance = pd.DataFrame({
-                            'feature': X.columns,
-                            'importance': model.named_steps['regressor'].coef_
-                        }).sort_values('importance', key=abs, ascending=False)
-                        
-                        fig = px.bar(
-                            importance, 
-                            x='importance', 
-                            y='feature', 
-                            orientation='h',
-                            title='Feature Importance (Linear Model)'
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
     
     # News Sentiment Tab
-    with tab4:
+    with tab3:
         st.header("News Sentiment Analysis")
         
         with st.spinner('Fetching news articles...'):
@@ -841,7 +692,7 @@ def main():
                         st.write(f"[Read more]({article['url']})")
     
     # AI Assistant Tab
-    with tab5:
+    with tab4:
         st.header("AI Investment Assistant")
         
         # Initialize Groq client
@@ -868,16 +719,16 @@ def main():
         else:
             context = f"Stock: {ticker}"
         
-        # Sample questions
+        # Sample questions - Updated with new questions
         st.subheader("Sample Questions")
         col1, col2, col3 = st.columns(3)
         
         sample_questions = [
-            "What is the investment outlook for this stock?",
-            "What are the key risks associated with this stock?",
-            "How does technical analysis look for this stock?",
-            "What factors could drive this stock's price higher?",
-            "Should I consider this stock for long-term investment?",
+            "What is the current market sentiment for this stock?",
+            "What are the key financial metrics I should consider?",
+            "How does this stock compare to its competitors?",
+            "What are the growth prospects for this company?",
+            "What are the potential risks for this investment?",
             "What is the analyst consensus for this stock?"
         ]
         
