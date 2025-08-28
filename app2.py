@@ -30,7 +30,7 @@ load_dotenv()
 
 # Page configuration
 st.set_page_config(
-    page_title="Quantum Stock Prediction",
+    page_title="Quantum Stock Prediction - India",
     page_icon="📈",
     layout="wide"
 )
@@ -38,15 +38,35 @@ st.set_page_config(
 # ------------------ DATA MODULE ------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_stock_data(ticker, start, end):
-    """Fetch stock data from Yahoo Finance"""
+    """Fetch stock data from Yahoo Finance with enhanced error handling"""
     try:
         logger.info(f"Fetching data for {ticker} from {start} to {end}")
+        
+        # Validate date range
+        if start >= end:
+            st.error("Start date must be before end date.")
+            return pd.DataFrame()
+            
         # Extend the start date to ensure we have enough data for calculations
         extended_start = start - timedelta(days=60)
+        
+        # Try multiple times with different parameters if needed
         data = yf.download(ticker, start=extended_start, end=end, progress=False, auto_adjust=True)
         
         if data.empty:
-            logger.warning(f"No data found for {ticker}")
+            logger.warning(f"No data found for {ticker} with auto_adjust=True, trying without auto_adjust")
+            # Try without auto_adjust
+            data = yf.download(ticker, start=extended_start, end=end, progress=False, auto_adjust=False)
+            
+        if data.empty:
+            # Try with a shorter period to validate the ticker
+            test_data = yf.download(ticker, period="1mo", progress=False)
+            if test_data.empty:
+                logger.error(f"Invalid ticker symbol: {ticker}")
+                st.error(f"Invalid ticker symbol: {ticker}. Please check the symbol and try again.")
+            else:
+                logger.error(f"No data available for {ticker} in the selected date range")
+                st.error(f"No data available for {ticker} in the selected date range. Try a different date range.")
             return pd.DataFrame()
             
         return data
@@ -66,19 +86,35 @@ def get_stock_news(ticker, num_articles=5):
     
     # Map tickers to company names for better search
     company_map = {
-        "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Google", "AMZN": "Amazon", 
-        "TSLA": "Tesla", "NVDA": "NVIDIA", "JPM": "JPMorgan", "JNJ": "Johnson & Johnson",
-        "RELIANCE.NS": "Reliance Industries", "TATAMOTORS.NS": "Tata Motors",
-        "TCS.NS": "Tata Consultancy Services", "INFY.NS": "Infosys", 
-        "HDFCBANK.NS": "HDFC Bank", "ICICIBANK.NS": "ICICI Bank",
-        "SBIN.NS": "State Bank of India", "WIPRO.NS": "Wipro", "HINDUNILVR.NS": "Hindustan Unilever",
-        "ITC.NS": "ITC Limited", "BAJFINANCE.NS": "Bajaj Finance", "BHARTIARTL.NS": "Bharti Airtel",
-        "LT.NS": "Larsen & Toubro", "KOTAKBANK.NS": "Kotak Mahindra Bank", "AXISBANK.NS": "Axis Bank",
-        "ASIANPAINT.NS": "Asian Paints", "HINDALCO.NS": "Hindalco Industries",
-        "MARUTI.NS": "Maruti Suzuki", "TITAN.NS": "Titan Company", "SUNPHARMA.NS": "Sun Pharmaceutical",
-        "NTPC.NS": "NTPC", "ONGC.NS": "Oil and Natural Gas Corporation", "POWERGRID.NS": "Power Grid Corporation",
-        "M&M.NS": "Mahindra & Mahindra", "ULTRACEMCO.NS": "UltraTech Cement", "ADANIPORTS.NS": "Adani Ports",
-        "ADANIENT.NS": "Adani Enterprises", "HCLTECH.NS": "HCL Technologies", "INDUSINDBK.NS": "IndusInd Bank"
+        "RELIANCE.NS": "Reliance Industries", 
+        "TATAMOTORS.NS": "Tata Motors",
+        "TCS.NS": "Tata Consultancy Services", 
+        "INFY.NS": "Infosys", 
+        "HDFCBANK.NS": "HDFC Bank", 
+        "ICICIBANK.NS": "ICICI Bank",
+        "SBIN.NS": "State Bank of India", 
+        "WIPRO.NS": "Wipro", 
+        "HINDUNILVR.NS": "Hindustan Unilever",
+        "ITC.NS": "ITC Limited", 
+        "BAJFINANCE.NS": "Bajaj Finance", 
+        "BHARTIARTL.NS": "Bharti Airtel",
+        "LT.NS": "Larsen & Toubro", 
+        "KOTAKBANK.NS": "Kotak Mahindra Bank", 
+        "AXISBANK.NS": "Axis Bank",
+        "ASIANPAINT.NS": "Asian Paints", 
+        "HINDALCO.NS": "Hindalco Industries",
+        "MARUTI.NS": "Maruti Suzuki", 
+        "TITAN.NS": "Titan Company", 
+        "SUNPHARMA.NS": "Sun Pharmaceutical",
+        "NTPC.NS": "NTPC", 
+        "ONGC.NS": "Oil and Natural Gas Corporation", 
+        "POWERGRID.NS": "Power Grid Corporation",
+        "M&M.NS": "Mahindra & Mahindra", 
+        "ULTRACEMCO.NS": "UltraTech Cement", 
+        "ADANIPORTS.NS": "Adani Ports",
+        "ADANIENT.NS": "Adani Enterprises", 
+        "HCLTECH.NS": "HCL Technologies", 
+        "INDUSINDBK.NS": "IndusInd Bank"
     }
     
     company_name = company_map.get(ticker, ticker.split('.')[0])
@@ -111,11 +147,35 @@ def get_stock_news(ticker, num_articles=5):
 def get_sample_news(ticker, num_articles=5):
     """Generate sample news data when API is not available"""
     company_map = {
-        "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Google", "AMZN": "Amazon", 
-        "TSLA": "Tesla", "NVDA": "NVIDIA", "JPM": "JPMorgan", "JNJ": "Johnson & Johnson",
-        "RELIANCE.NS": "Reliance Industries", "TATAMOTORS.NS": "Tata Motors",
-        "TCS.NS": "Tata Consultancy Services", "INFY.NS": "Infosys", 
-        "HDFCBANK.NS": "HDFC Bank", "ICICIBANK.NS": "ICICI Bank"
+        "RELIANCE.NS": "Reliance Industries", 
+        "TATAMOTORS.NS": "Tata Motors",
+        "TCS.NS": "Tata Consultancy Services", 
+        "INFY.NS": "Infosys", 
+        "HDFCBANK.NS": "HDFC Bank", 
+        "ICICIBANK.NS": "ICICI Bank",
+        "SBIN.NS": "State Bank of India", 
+        "WIPRO.NS": "Wipro", 
+        "HINDUNILVR.NS": "Hindustan Unilever",
+        "ITC.NS": "ITC Limited", 
+        "BAJFINANCE.NS": "Bajaj Finance", 
+        "BHARTIARTL.NS": "Bharti Airtel",
+        "LT.NS": "Larsen & Toubro", 
+        "KOTAKBANK.NS": "Kotak Mahindra Bank", 
+        "AXISBANK.NS": "Axis Bank",
+        "ASIANPAINT.NS": "Asian Paints", 
+        "HINDALCO.NS": "Hindalco Industries",
+        "MARUTI.NS": "Maruti Suzuki", 
+        "TITAN.NS": "Titan Company", 
+        "SUNPHARMA.NS": "Sun Pharmaceutical",
+        "NTPC.NS": "NTPC", 
+        "ONGC.NS": "Oil and Natural Gas Corporation", 
+        "POWERGRID.NS": "Power Grid Corporation",
+        "M&M.NS": "Mahindra & Mahindra", 
+        "ULTRACEMCO.NS": "UltraTech Cement", 
+        "ADANIPORTS.NS": "Adani Ports",
+        "ADANIENT.NS": "Adani Enterprises", 
+        "HCLTECH.NS": "HCL Technologies", 
+        "INDUSINDBK.NS": "IndusInd Bank"
     }
     
     company_name = company_map.get(ticker, ticker.split('.')[0])
@@ -194,7 +254,7 @@ def get_ai_response(client, prompt, context=""):
     
     try:
         system_prompt = f"""
-        You are a financial analyst assistant. Provide insightful, data-driven analysis about stocks and investments.
+        You are a financial analyst assistant specializing in Indian stocks. Provide insightful, data-driven analysis about stocks and investments.
         Use the following context information if relevant: {context}
         Be concise but informative in your responses.
         """
@@ -372,7 +432,7 @@ def plot_stock_data(data, ticker):
     fig.update_layout(
         title=f'{ticker} Price Movement',
         xaxis_title='Date',
-        yaxis_title='Price ($)',
+        yaxis_title='Price (₹)',
         template='plotly_dark',
         height=500
     )
@@ -436,18 +496,13 @@ def plot_technical_indicators(data):
 
 # ------------------ MAIN APPLICATION ------------------
 def main():
-    st.title("📈 Quantum Stock Prediction")
-    st.markdown("A machine learning approach to stock price prediction with news sentiment and AI assistant")
+    st.title("📈 Quantum Stock Prediction - India")
+    st.markdown("A machine learning approach to Indian stock price prediction with news sentiment and AI assistant")
     
     # Sidebar configuration
     st.sidebar.header("Configuration")
     
-    # Expanded stock selection
-    us_stocks = [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "JPM", "JNJ", "V", "PG",
-        "UNH", "HD", "MA", "DIS", "PYPL", "NFLX", "ADBE", "CRM", "XOM", "VZ"
-    ]
-    
+    # Indian stock selection
     indian_stocks = [
         "RELIANCE.NS", "TATAMOTORS.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", 
         "ICICIBANK.NS", "SBIN.NS", "WIPRO.NS", "HINDUNILVR.NS", "ITC.NS",
@@ -457,9 +512,7 @@ def main():
         "ADANIPORTS.NS", "ADANIENT.NS", "HCLTECH.NS", "INDUSINDBK.NS"
     ]
     
-    all_stocks = us_stocks + indian_stocks
-    
-    ticker = st.sidebar.selectbox("Select Stock", all_stocks, index=0)
+    ticker = st.sidebar.selectbox("Select Stock", indian_stocks, index=0)
     
     # Date range selection
     end_date = datetime.now()
@@ -483,6 +536,26 @@ def main():
     
     if data.empty:
         st.error("No data available for the selected ticker and date range.")
+        
+        # Provide helpful suggestions
+        st.info("""
+        **Troubleshooting tips:**
+        1. Check if the ticker symbol is correct (e.g., RELIANCE.NS, TCS.NS)
+        2. Ensure your date range includes trading days (avoid weekends and holidays)
+        3. Try a shorter date range if the issue persists
+        """)
+        
+        # Show sample data for demonstration
+        if st.checkbox("Show sample data for demonstration"):
+            sample_dates = pd.date_range(start=start_date, end=end_date, freq='D')
+            sample_data = pd.DataFrame({
+                'Open': np.random.uniform(100, 200, len(sample_dates)),
+                'High': np.random.uniform(200, 250, len(sample_dates)),
+                'Low': np.random.uniform(80, 100, len(sample_dates)),
+                'Close': np.random.uniform(100, 200, len(sample_dates)),
+                'Volume': np.random.uniform(1000000, 5000000, len(sample_dates))
+            }, index=sample_dates)
+            st.dataframe(sample_data)
         return
     
     # Calculate technical indicators
@@ -508,7 +581,7 @@ def main():
         volatility_value = float(data['Volatility'].iloc[-1]) if 'Volatility' in data.columns and not data['Volatility'].empty else 0
         rsi_value = float(data['RSI'].iloc[-1]) if 'RSI' in data.columns and not data['RSI'].empty else 0
         
-        col1.metric("Current Price", f"${current_price:.2f}")
+        col1.metric("Current Price", f"₹{current_price:.2f}")
         col2.metric("Daily Change", f"{daily_change:.2f}%")
         col3.metric("30-Day Volatility", f"{volatility_value*100:.2f}%" if volatility_value else "N/A")
         col4.metric("RSI", f"{rsi_value:.2f}" if rsi_value else "N/A")
@@ -741,7 +814,7 @@ def main():
             
             context = f"""
             Stock: {ticker}
-            Current Price: ${current_price:.2f}
+            Current Price: ₹{current_price:.2f}
             Overall Change: {price_change:.2f}%
             """
             
