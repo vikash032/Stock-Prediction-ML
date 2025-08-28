@@ -106,6 +106,14 @@ class QuantumLogger:
 # Global logger instance
 quantum_logger = QuantumLogger()
 
+import traceback
+import logging
+from functools import wraps
+
+# Setup default logger if not using quantum_logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.ERROR)
+
 def handle_exceptions(fallback_value=None, user_message=None):
     """Decorator for comprehensive exception handling"""
     def decorator(func):
@@ -124,9 +132,13 @@ def handle_exceptions(fallback_value=None, user_message=None):
                     'traceback': traceback.format_exc()
                 }
                 
-                quantum_logger.logger.error(f"Exception in {func.__name__}", extra=error_details)
-                
-                # User-friendly message
+                # Use quantum_logger if available, else fallback
+                try:
+                    quantum_logger.logger.error(f"Exception in {func.__name__}", extra=error_details)
+                except Exception:
+                    logger.error(f"Exception in {func.__name__}: {e}", exc_info=True)
+
+                # Show user-friendly message
                 if user_message:
                     st.error(user_message)
                 else:
