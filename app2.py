@@ -106,14 +106,6 @@ class QuantumLogger:
 # Global logger instance
 quantum_logger = QuantumLogger()
 
-import traceback
-import logging
-from functools import wraps
-
-# Setup default logger if not using quantum_logger
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.ERROR)
-
 def handle_exceptions(fallback_value=None, user_message=None):
     """Decorator for comprehensive exception handling"""
     def decorator(func):
@@ -132,13 +124,13 @@ def handle_exceptions(fallback_value=None, user_message=None):
                     'traceback': traceback.format_exc()
                 }
                 
-                # Use quantum_logger if available, else fallback
-                try:
-                    quantum_logger.logger.error(f"Exception in {func.__name__}", extra=error_details)
-                except Exception:
-                    logger.error(f"Exception in {func.__name__}: {e}", exc_info=True)
-
-                # Show user-friendly message
+                # ✅ wrap inside safe key to avoid reserved LogRecord keys
+                quantum_logger.logger.error(
+                    f"Exception in {func.__name__}",
+                    extra={"error_context": error_details}
+                )
+                
+                # User-friendly message
                 if user_message:
                     st.error(user_message)
                 else:
@@ -149,6 +141,7 @@ def handle_exceptions(fallback_value=None, user_message=None):
         
         return wrapper
     return decorator
+
 
 # Data validation utilities
 class DataValidator:
@@ -191,7 +184,7 @@ class DataValidator:
             if extreme_moves.any():
                 extreme_count = extreme_moves.sum()
                 validation_result['warnings'].append(
-                    f"{extremecount} days with extreme price movements (>50%)"
+                    f"{extreme_count} days with extreme price movements (>50%)"
                 )
                 validation_result['data_quality_score'] -= min(30, extreme_count * 5)
             
@@ -324,7 +317,7 @@ class CircuitBreaker:
             return result
             
         except Exception as e:
-            self._failure()
+            self._on_failure()
             raise e
     
     def _should_attempt_reset(self) -> bool:
@@ -376,7 +369,7 @@ class SmartCache:
             'created': datetime.now()
         }
     
-    def invalidate_pattern(self, pattern:str) -> int:
+    def invalidate_pattern(self, pattern: str) -> int:
         """Invalidate cache entries matching pattern"""
         removed = 0
         keys_to_remove = []
@@ -472,7 +465,7 @@ class HealthChecker:
         if critical_failures > 0:
             results['overall_status'] = 'critical'
         elif any(check['status'] != 'healthy' for check in results['checks'].values()):
-            results['overall_status' ] = 'degraded'
+            results['overall_status'] = 'degraded'
         
         return results
 
@@ -575,8 +568,7 @@ def validate_stock_data(data, min_days=30):
     
     return data
 
-# Module 1: Data Fetching - IMPROVED for better accuracy
-@st.cache_data(ttl=180, show_spinner=False, max_entries=50)
+# Module 1: Data Fetching @st.cache_data(ttl=180, show_spinner=False, max_entries=50)
 @handle_exceptions(fallback_value=pd.DataFrame(), user_message="Failed to fetch stock data. Please try again.")
 @monitor_performance(threshold_ms=2000)
 def get_stock_data(ticker, start, end):
@@ -634,7 +626,7 @@ def get_stock_data(ticker, start, end):
             if data.empty:
                 # Try with just the symbol
                 base_ticker = ticker.replace('.NS', '').replace('.BO', '')
-                data = yf.download(base_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=极), 
+                data = yf.download(base_ticker, start=start_dt - timedelta(days=60), end=end_dt + timedelta(days=1), 
                                   progress=False, auto_adjust=True)
         
         if data.empty:
@@ -686,6 +678,7 @@ def get_stock_data(ticker, start, end):
             }
         )
         raise
+
 
 # New function to get index data and market sentiment
 @st.cache_data(ttl=300, show_spinner=False)
@@ -878,7 +871,7 @@ def get_news(ticker):
                 "summary": a.get("description", ""),
                 "link": a.get("url", ""),
                 "date": a.get("publishedAt", ""),
-                "source": a.get("source", {}).极("name", "")
+                "source": a.get("source", {}).get("name", "")
             } for a in data.get("articles", [])
         ]
     except Exception as e:
@@ -1151,53 +1144,26 @@ def enhanced_forecast_tab(data, forecast_days):
 
 # Risk Management Enhancements
 def calculate_risk_metrics(data, returns):
-    """Calculate comprehensive risk metrics with error handling"""
+    """Calculate comprehensive risk metrics"""
     metrics = {}
     
-    try:
-        # Value at Risk (VaR)
-        if len(returns) > 0:
-            metrics['var_95'] = np.percentile(returns, 5)
-            metrics['var_99'] = np.percentile(returns, 1)
-            
-            # Expected Shortfall (CVaR)
-            var_95 = metrics['var_95']
-            cvar_data = returns[returns <= var_95]
-            metrics['cvar_95'] = cvar_data.mean() if len(cvar_data) > 0 else np.nan
-            
-            # Maximum Drawdown
-            if 'Close' in data.columns and len(data) > 0:
-                cumulative = (1 + returns).cumprod()
-                rolling_max = cumulative.expanding().max()
-                drawdown = (cumulative - rolling_max) / rolling_max
-                metrics['max_drawdown'] = drawdown.min()
-                
-                # Calmar Ratio
-                if len(returns) >= 252:  # Need at least a year of data
-                    annual_return = (1 + returns).prod() ** (252/len(returns)) - 1
-                    metrics['calmar_ratio'] = annual_return / abs(metrics['max_drawdown']) if metrics['max_drawdown'] != 0 else np.nan
-                else:
-                    metrics['calmar_ratio'] = np.nan
-            else:
-                metrics['max_drawdown'] = np.nan
-                metrics['calmar_ratio'] = np.nan
-        else:
-            metrics['var_95'] = np.nan
-            metrics['var_99'] = np.nan
-            metrics['cvar_95'] = np.nan
-            metrics['max_drawdown'] = np.nan
-            metrics['calmar_ratio'] = np.nan
-            
-    except Exception as e:
-        quantum_logger.logger.error(f"Error calculating risk metrics: {str(e)}")
-        # Set all metrics to NaN in case of error
-        metrics = {
-            'var_95': np.nan,
-            'var_99': np.nan,
-            'cvar_95': np.nan,
-            'max_drawdown': np.nan,
-            'calmar_ratio': np.nan
-        }
+    # Value at Risk (VaR)
+    metrics['var_95'] = np.percentile(returns, 5)
+    metrics['var_99'] = np.percentile(returns, 1)
+    
+    # Expected Shortfall (CVaR)
+    var_95 = metrics['var_95']
+    metrics['cvar_95'] = returns[returns <= var_95].mean()
+    
+    # Maximum Drawdown
+    cumulative = (1 + returns).cumprod()
+    rolling_max = cumulative.expanding().max()
+    drawdown = (cumulative - rolling_max) / rolling_max
+    metrics['max_drawdown'] = drawdown.min()
+    
+    # Calmar Ratio
+    annual_return = (1 + returns).prod() ** (252/len(returns)) - 1
+    metrics['calmar_ratio'] = annual_return / abs(metrics['max_drawdown'])
     
     return metrics
 
@@ -1255,7 +1221,7 @@ class RealTimeDataHandler:
     def connect(self, url="wss://your-websocket-url"):
         """Connect to real-time data feed"""
         try:
-            self.w = websocket.WebSocketApp(
+            self.ws = websocket.WebSocketApp(
                 url,
                 on_open=self.on_open,
                 on_message=self.on_message,
@@ -1562,7 +1528,7 @@ def backtest_strategy(data, strategy, params):
         
         if strategy == "Moving Average Crossover":
             # Convert to scalar values for comparison
-            sma_short_prev = float(data['SMA_short'].ioc[i-1])
+            sma_short_prev = float(data['SMA_short'].iloc[i-1])
             sma_long_prev = float(data['SMA_long'].iloc[i-1])
             sma_short_current = float(data['SMA_short'].iloc[i])
             sma_long_current = float(data['SMA_long'].iloc[i])
@@ -1810,7 +1776,7 @@ def get_earnings_data(ticker):
         pass
     
     # Create mock data for 2024-2025
-    dates = pd.date_range(start='2024-01-01', periods=8, freq='极')
+    dates = pd.date_range(start='2024-01-01', periods=8, freq='Q')
     earnings = pd.DataFrame({
         'Earnings Date': dates,
         'EPS Estimate': np.random.uniform(0.5, 2.5, 8),
@@ -2168,7 +2134,7 @@ CUSTOM_CSS = """
     
     .news-item:hover {
         transform: translateY(-5px);
-        box-shadow: 0 12px 25px rgba(0, 0, 0, 极.2);
+        box-shadow: 0 12px 25px rgba(0, 0, 0, 0.2);
     }
     
     .positive {
@@ -2237,7 +2203,7 @@ CUSTOM_CSS = """
         transform: translateY(-10px) scale(1.02);
         box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
         border: 1px solid var(--accent);
-  }
+    }
     
     .feature-card h3 {
         color: white;
@@ -2313,7 +2279,7 @@ CUSTOM_CSS = """
         font-size: 2.5rem;
         font-weight: 800;
         color: var(--accent);
-        text-shadow: 0 0 10px rgba(0, 0, 0, 极.5);
+        text-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
         margin: 10px 0;
     }
     
@@ -2413,7 +2379,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93极9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -2470,7 +2436,7 @@ CUSTOM_CSS = """
     .macro-metric h5 {
         color: white;
         margin-bottom: 15px;
-        font-size: 1.2em;
+        font-size: 1.2rem;
         font-weight: 600;
     }
     
@@ -2509,7 +2475,7 @@ CUSTOM_CSS = """
         position: relative;
         overflow: hidden;
         z-index: 1;
-    }
+ }
     
     .stAlert::before {
         content: '';
@@ -2652,7 +2618,7 @@ def main():
                 
                 if index_data is not None and not index_data.empty:
                     current_price = index_data['Close'].iloc[-1]
-                    prev_close = index_data['close'].iloc[-2] if len(index_data) > 1 else current_price
+                    prev_close = index_data['Close'].iloc[-2] if len(index_data) > 1 else current_price
                     change = ((current_price - prev_close) / prev_close) * 100
                     
                     # Determine color based on change
@@ -2778,7 +2744,7 @@ def main():
         st.markdown('<div class="subheader">🚦 Getting Started</div>', unsafe_allow_html=True)
         st.markdown("""
         <div class="feature-card">
-            <ol style极font-size:1.1em;">
+            <ol style="font-size:1.1em;">
                 <li><b style="color:#00c853;">Select a stock</b> from the sidebar dropdown</li>
                 <li><b style="color:#00c853;">Adjust date ranges</b> and forecast periods</li>
                 <li><b style="color:#00c853;">Explore different tabs</b> for various analyses</li>
@@ -2870,7 +2836,7 @@ def main():
                 
                 # RSI on secondary axis
                 if 'RSI' in data.columns:
-                    fig_tech.add_trace(极.Scatter(
+                    fig_tech.add_trace(go.Scatter(
                         x=data.index, y=data['RSI'],
                         mode='lines', name='RSI',
                         line=dict(color='#FF00FF'),
@@ -2909,7 +2875,7 @@ def main():
                     
                     prices, payoff = create_options_payoff(strike, premium, 'call', contracts)
                     fig_call = go.Figure()
-                    fig_call.add_trace(go.Scatter(x=prices, y=payoff, mode='lines', name='Call Payoff'))
+                    fig_call.add_race(go.Scatter(x=prices, y=payoff, mode='lines', name='Call Payoff'))
                     fig_call.update_layout(
                         title='Call Option Payoff Diagram',
                         xaxis_title='Stock Price',
@@ -2972,7 +2938,7 @@ def main():
                         xaxis_title="Date",
                         yaxis_title="Price"
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig1, use_container_width=True)
                     
                     st.subheader("Forecast Components")
                     fig2 = plot_components_plotly(prophet_model, prophet_forecast_df)
@@ -3152,11 +3118,11 @@ def main():
                     
                     # Earnings Forecast
                     st.markdown("#### Next Earnings Forecast")
-                    next_date = earnings_data.index[-1] + pd.DateOffset(months)
+                    next_date = earnings_data.index[-1] + pd.DateOffset(months=3)
                     st.metric("Estimated Date", next_date.strftime("%Y-%m-%d"))
                     
                     col_est1, col_est2 = st.columns(2)
-                    col_极t1.metric("Consensus EPS Estimate", f"{last_earnings['EPS Estimate'] * 1.05:.2f}")
+                    col_est1.metric("Consensus EPS Estimate", f"{last_earnings['EPS Estimate'] * 1.05:.2f}")
                     col_est2.metric("Predicted Surprise", f"{np.random.uniform(-5, 10):.2f}%")
             except Exception as e:
                 st.error(f"Earnings data error: {str(e)}")
@@ -3176,7 +3142,7 @@ def main():
                 fig_earn.add_trace(go.Bar(
                     x=earnings_data.index,
                     y=earnings_data['Surprise (%)'],
-                    name='Earnings Surprise',
+                    name='earnings Surprise',
                     marker_color=np.where(earnings_data['Surprise (%)'] > 0, 'green', 'red')
                 ))
                 fig_earn.update_layout(
@@ -3297,35 +3263,13 @@ def main():
             
             # Risk metrics
             st.subheader("Portfolio Risk Metrics")
-            try:
-                risk_metrics = calculate_risk_metrics(portfolio_data, returns)
-                
-                col_risk1, col_risk2, col_risk3, col_risk4 = st.columns(4)
-                
-                # Check if risk metrics are valid before displaying
-                if 'var_95' in risk_metrics and not pd.isna(risk_metrics['var_95']):
-                    col_risk1.metric("VaR (95%)", f"{risk_metrics['var_95']:.2%}")
-                else:
-                    col_risk1.metric("VaR (95%)", "N/A")
-                
-                if 'cvar_95' in risk_metrics and not pd.isna(risk_metrics['cvar_95']):
-                    col_risk2.metric("CVaR (95%)", f"{risk_metrics['cvar_95']:.2%}")
-                else:
-                    col_risk2.metric("CVaR (95%)", "N/A")
-                
-                if 'max_drawdown' in risk_metrics and not pd.isna(risk_metrics['max_drawdown']):
-                    col_risk3.metric("Max Drawdown", f"{risk_metrics['max_drawdown']:.2%}")
-                else:
-                    col_risk3.metric("Max Drawdown", "N/A")
-                
-                if 'calmar_ratio' in risk_metrics and not pd.isna(risk_metrics['calmar_ratio']):
-                    col_risk4.metric("Calmar Ratio", f"{risk_metrics['calmar_ratio']:.2f}")
-                else:
-                    col_risk4.metric("Calmar Ratio", "N/A")
-                    
-            except Exception as e:
-                st.error(f"Error calculating risk metrics: {str(e)}")
-                st.info("Risk metrics require sufficient historical data to calculate accurately.")
+            risk_metrics = calculate_risk_metrics(portfolio_data, returns)
+            
+            col_risk1, col_risk2, col_risk3, col_risk4 = st.columns(4)
+            col_risk1.metric("VaR (95%)", f"{risk_metrics['var_95']:.2%}")
+            col_risk2.metric("CVaR (95%)", f"{risk_metrics['cvar_95']:.2%}")
+            col_risk3.metric("Max Drawdown", f"{risk_metrics['max_drawdown']:.2%}")
+            col_risk4.metric("Calmar Ratio", f"{risk_metrics['calmar_ratio']:.2f}")
             
             # Macroeconomic Dashboard
             st.subheader("Macroeconomic Dashboard")
