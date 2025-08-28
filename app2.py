@@ -66,6 +66,8 @@ def get_stock_news(ticker, num_articles=5):
     
     # Map tickers to company names for better search
     company_map = {
+        "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Google", "AMZN": "Amazon", 
+        "TSLA": "Tesla", "NVDA": "NVIDIA", "JPM": "JPMorgan", "JNJ": "Johnson & Johnson",
         "RELIANCE.NS": "Reliance Industries", "TATAMOTORS.NS": "Tata Motors",
         "TCS.NS": "Tata Consultancy Services", "INFY.NS": "Infosys", 
         "HDFCBANK.NS": "HDFC Bank", "ICICIBANK.NS": "ICICI Bank",
@@ -109,6 +111,8 @@ def get_stock_news(ticker, num_articles=5):
 def get_sample_news(ticker, num_articles=5):
     """Generate sample news data when API is not available"""
     company_map = {
+        "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Google", "AMZN": "Amazon", 
+        "TSLA": "Tesla", "NVDA": "NVIDIA", "JPM": "JPMorgan", "JNJ": "Johnson & Johnson",
         "RELIANCE.NS": "Reliance Industries", "TATAMOTORS.NS": "Tata Motors",
         "TCS.NS": "Tata Consultancy Services", "INFY.NS": "Infosys", 
         "HDFCBANK.NS": "HDFC Bank", "ICICIBANK.NS": "ICICI Bank"
@@ -529,25 +533,19 @@ def main():
         st.subheader("Feature Correlation with Price")
         if len(data) > 30:  # Ensure we have enough data
             numeric_data = data.select_dtypes(include=[np.number])
+            corr = numeric_data.corr()['Close'].sort_values(ascending=False)
             
-            if 'Close' in numeric_data.columns:
-                corr = numeric_data.corr()['Close'].sort_values(ascending=False)
-                # Remove price itself from correlation list
-                corr = corr.drop('Close', errors='ignore')
-
-                fig = px.bar(
-                    x=corr.values, 
-                    y=corr.index, 
-                    orientation='h',
-                    title='Feature Correlation with Closing Price',
-                    labels={'x': 'Correlation', 'y': 'Feature'}
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("'Close' column not found in numeric data. Correlation cannot be calculated.")
-        else:
-            st.warning("Not enough data to calculate correlation (need at least 30 rows).")
-
+            # Remove price itself from correlation list
+            corr = corr.drop('Close', errors='ignore')
+            
+            fig = px.bar(
+                x=corr.values, 
+                y=corr.index, 
+                orientation='h',
+                title='Feature Correlation with Closing Price',
+                labels={'x': 'Correlation', 'y': 'Feature'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
     
     # Prediction Tab
     with tab3:
