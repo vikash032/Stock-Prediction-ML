@@ -108,7 +108,7 @@ def get_stock_news(ticker, num_articles=5):
 
 def get_sample_news(ticker, num_articles=5):
     """Generate sample news data when API is not available"""
-    company_map = {,
+    company_map = {
         "RELIANCE.NS": "Reliance Industries", "TATAMOTORS.NS": "Tata Motors",
         "TCS.NS": "Tata Consultancy Services", "INFY.NS": "Infosys", 
         "HDFCBANK.NS": "HDFC Bank", "ICICIBANK.NS": "ICICI Bank"
