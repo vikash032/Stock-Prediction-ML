@@ -3360,7 +3360,7 @@ def main():
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
             """, unsafe_allow_html=True)
-            col_m6.markdown"""
+            col_m6.markdown(f"""
                 <div class="macro-metric">
                     <h5>Manufacturing PMI</h5>
                     <h3>{macro_data['manufacturing_pmi']}</h3>
