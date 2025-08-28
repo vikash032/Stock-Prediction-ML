@@ -220,33 +220,62 @@ def calculate_technical_indicators(data):
     
     close_series = data['Close']
     
+    # Check if we have enough data for calculations
+    if len(data) < 20:
+        st.warning(f"Insufficient data for technical indicators. Need at least 20 data points, got {len(data)}.")
+        return data
+    
     # Moving Averages
-    data['SMA20'] = close_series.rolling(window=20).mean()
-    data['SMA50'] = close_series.rolling(window=50).mean()
-    data['EMA20'] = close_series.ewm(span=20, adjust=False).mean()
+    try:
+        data['SMA20'] = close_series.rolling(window=20).mean()
+        if len(data) >= 50:
+            data['SMA50'] = close_series.rolling(window=50).mean()
+        data['EMA20'] = close_series.ewm(span=20, adjust=False).mean()
+    except Exception as e:
+        logger.error(f"Error calculating moving averages: {str(e)}")
     
-    # RSI
-    data['RSI'] = ta.momentum.rsi(close_series, window=14)
+    # RSI - need at least 14 periods
+    try:
+        if len(data) >= 14:
+            data['RSI'] = ta.momentum.rsi(close_series, window=14)
+    except Exception as e:
+        logger.error(f"Error calculating RSI: {str(e)}")
     
-    # MACD
-    macd = ta.trend.MACD(close_series)
-    data['MACD'] = macd.macd()
-    data['MACD_Signal'] = macd.macd_signal()
-    data['MACD_Hist'] = macd.macd_diff()
+    # MACD - need at least 26 periods
+    try:
+        if len(data) >= 26:
+            macd = ta.trend.MACD(close_series)
+            data['MACD'] = macd.macd()
+            data['MACD_Signal'] = macd.macd_signal()
+            data['MACD_Hist'] = macd.macd_diff()
+    except Exception as e:
+        logger.error(f"Error calculating MACD: {str(e)}")
     
-    # Bollinger Bands
-    bollinger = ta.volatility.BollingerBands(close_series, window=20, window_dev=2)
-    data['BB_Upper'] = bollinger.bollinger_hband()
-    data['BB_Lower'] = bollinger.bollinger_lband()
-    data['BB_Width'] = bollinger.bollinger_hband() - bollinger.bollinger_lband()
+    # Bollinger Bands - need at least 20 periods
+    try:
+        if len(data) >= 20:
+            bollinger = ta.volatility.BollingerBands(close_series, window=20, window_dev=2)
+            data['BB_Upper'] = bollinger.bollinger_hband()
+            data['BB_Lower'] = bollinger.bollinger_lband()
+            data['BB_Width'] = bollinger.bollinger_hband() - bollinger.bollinger_lband()
+    except Exception as e:
+        logger.error(f"Error calculating Bollinger Bands: {str(e)}")
     
     # Volatility
-    returns = close_series.pct_change()
-    data['Volatility'] = returns.rolling(window=20).std() * np.sqrt(252)
+    try:
+        if len(data) >= 20:
+            returns = close_series.pct_change()
+            data['Volatility'] = returns.rolling(window=20).std() * np.sqrt(252)
+    except Exception as e:
+        logger.error(f"Error calculating volatility: {str(e)}")
     
     # Lagged returns
-    for i in [1, 3, 5, 7]:
-        data[f'Return_{i}d'] = close_series.pct_change(i)
+    try:
+        for i in [1, 3, 5, 7]:
+            if len(data) > i:
+                data[f'Return_{i}d'] = close_series.pct_change(i)
+    except Exception as e:
+        logger.error(f"Error calculating lagged returns: {str(e)}")
     
     return data.dropna()
 
