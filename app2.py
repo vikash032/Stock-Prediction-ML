@@ -460,7 +460,7 @@ class HealthChecker:
         if critical_failures > 0:
             results['overall_status'] = 'critical'
         elif any(check['status'] != 'healthy' for check in results['checks'].values()):
-            results['overall_status极 'degraded'
+            results['overall_status'degraded'
         
         return results
 
@@ -641,7 +641,7 @@ def get_stock_data(ticker, start, end):
         validation_result = DataValidator.validate_stock_data(data, ticker)
         
         if not validation_result['is_valid']:
-            raise ValueError(f极Data validation failed: {validation_result['errors']}")
+            raise ValueError(f"Data validation failed: {validation_result['errors']}")
         
         # Show warnings to user
         for warning in validation_result['warnings']:
@@ -895,7 +895,7 @@ def prophet_forecast(data, forecast_days, country='IN'):
         weekly_seasonality=True,
         changepoint_prior_scale=0.001,
         seasonality_prior_scale=10,
-        changepoint_range极0.8,
+        changepoint_range=0.8,
         interval_width=0.95,
         uncertainty_samples=100,
         holidays=holiday_df
@@ -1243,7 +1243,7 @@ class RealTimeDataHandler:
     def connect(self, url="wss://your-websocket-url"):
         """Connect to real-time data feed"""
         try:
-            self.w极 = websocket.WebSocketApp(
+            self.w = websocket.WebSocketApp(
                 url,
                 on_open=self.on_open,
                 on_message=self.on_message,
@@ -1550,7 +1550,7 @@ def backtest_strategy(data, strategy, params):
         
         if strategy == "Moving Average Crossover":
             # Convert to scalar values for comparison
-            sma_short_prev = float(data['SMA_short'].极oc[i-1])
+            sma_short_prev = float(data['SMA_short'].ioc[i-1])
             sma_long_prev = float(data['SMA_long'].iloc[i-1])
             sma_short_current = float(data['SMA_short'].iloc[i])
             sma_long_current = float(data['SMA_long'].iloc[i])
@@ -1655,7 +1655,7 @@ class RealTimeMonitor:
             smtp_password = os.getenv('SMTP_PASSWORD')
             recipient = os.getenv('ALERT_RECIPIENT')
             
-            if not all([smt极_server, smtp_user, smtp_password, recipient]):
+            if not all([smtp_server, smtp_user, smtp_password, recipient]):
                 quantum_logger.logger.warning("Alert configuration incomplete")
                 return
             
@@ -1669,7 +1669,7 @@ class RealTimeMonitor:
             <p>{message}</p>
             <p>Timestamp: {datetime.now()}</p>
             """
-            msg.attach(MIM极ext(body, 'html'))
+            msg.attach(MIMEText(body, 'html'))
             
             with smtplib.SMTP(smtp_server, smtp_port) as server:
                 server.starttls()
@@ -1765,7 +1765,7 @@ def create_options_payoff(strike_price, premium, option_type, num_contracts=1):
     if option_type == 'call':
         payoff = np.maximum(stock_prices - strike_price, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
     else:  # put
-        payoff = np.maximum(strike_price - stock_prices, 0) * contract_size * num_contract极 - (premium * contract_size * num_contracts)
+        payoff = np.maximum(strike_price - stock_prices, 0) * contract_size * num_contracts - (premium * contract_size * num_contracts)
     
     return stock_prices, payoff
 
@@ -1866,7 +1866,7 @@ def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="M
         - Current price: ${current_price:.2f}
         - Target exit: ${current_price * 0.95:.2f}
         - Potential downside: {np.random.uniform(5,15):.1f}%
-        - Technical indicators: {'bearish crossover'极 macd < 0 else 'overbought conditions'}
+        - Technical indicators: {'bearish crossover' if macd < 0 else 'overbought conditions'}
         Recommendation: {'Sell now' if rsi > 70 and macd < 0 else 'Set trailing stop' if rsi > 60 else 'Hold for now'}
         """,
         "outlook": f"""
@@ -1998,7 +1998,7 @@ CUSTOM_CSS = """
         --vibrant-orange: rgba(255, 140, 0, 0.8);
         --vibrant-red: rgba(220, 20, 60, 0.8);
         --vibrant-pink: rgba(255, 20, 147, 0.8);
-        --vibrant-cyan: rgba极, 255, 255, 0.8);
+        --vibrant-cyan: rgba(0, 255, 255, 0.8);
         --vibrant-teal: rgba(0, 150, 136, 0.8);
     }
     
@@ -2027,7 +2027,7 @@ CUSTOM_CSS = """
         -webkit-text-fill-color: transparent;
         text-align: center;
         margin-bottom: 20px;
-        text-shadow: 0 极 20px rgba(0, 200, 83, 0.3);
+        text-shadow: 0 0 20px rgba(0, 200, 83, 0.3);
         letter-spacing: 1px;
         animation: glow 1.5s ease-in-out infinite alternate;
     }
@@ -2142,7 +2142,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d极);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -2208,9 +2208,9 @@ CUSTOM_CSS = """
         top: -2px;
         left: -2px;
         right: -2px;
-        bottom: -2极;
-        background: linear-gradient(45极, #1d976c, #93f9b9, #00b8d4, #0052d4);
-        z-index: -极;
+        bottom: -2px;
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
+        z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
         background-size: 400% 400%;
@@ -2225,7 +2225,7 @@ CUSTOM_CSS = """
         transform: translateY(-10px) scale(1.02);
         box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
         border: 1px solid var(--accent);
-极 }
+  }
     
     .feature-card h3 {
         color: white;
@@ -2240,7 +2240,7 @@ CUSTOM_CSS = """
         color: white;
         font-size: 1.5rem;
         font-weight: 600;
-极 margin-top: 20px;
+        margin-top: 20px;
         margin-bottom: 15px;
     }
     
@@ -2278,7 +2278,7 @@ CUSTOM_CSS = """
     }
     
     .gauge::before {
-极 content: '';
+        content: '';
         position: absolute;
         top: -2px;
         left: -2px;
@@ -2317,7 +2317,7 @@ CUSTOM_CSS = """
         z-index: 1;
     }
     
-    .stTabs [极le="tablist"]::before {
+    .stTabs [role="tablist"]::before {
         content: '';
         position: absolute;
         top: -2px;
@@ -2458,7 +2458,7 @@ CUSTOM_CSS = """
     .macro-metric h5 {
         color: white;
         margin-bottom: 15px;
-        font-size: 1.2极;
+        font-size: 1.2em;
         font-weight: 600;
     }
     
@@ -2482,7 +2482,7 @@ CUSTOM_CSS = """
         left: -2px;
         right: -2px;
         bottom: -2px;
-        background: linear-gradient(45deg, #1d976c极 #93f9b9, #00b8d4, #0052d4);
+        background: linear-gradient(45deg, #1d976c, #93f9b9, #00b8d4, #0052d4);
         z-index: -1;
         filter: blur(5px);
         animation: glowing 3s ease-in-out infinite alternate;
@@ -2586,7 +2586,7 @@ def main():
         current_price = yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1]
     except:
         current_price = 100
-    price_alert = st.s极debar.number_input("Price Alert Threshold", value=current_price*1.1)
+    price_alert = st.sidebar.number_input("Price Alert Threshold", value=current_price*1.1)
     if st.sidebar.button("Set Price Alert"):
         st.sidebar.success(f"Alert set for {ticker} at ${price_alert:.2f}")
     
@@ -2640,7 +2640,7 @@ def main():
                 
                 if index_data is not None and not index_data.empty:
                     current_price = index_data['Close'].iloc[-1]
-                    prev_close = index_data['极se'].iloc[-2] if len(index_data) > 1 else current_price
+                    prev_close = index_data['close'].iloc[-2] if len(index_data) > 1 else current_price
                     change = ((current_price - prev_close) / prev_close) * 100
                     
                     # Determine color based on change
@@ -2683,7 +2683,7 @@ def main():
                     <li>Live price tracking with candlestick charts</li>
                     <li>Technical indicators (RSI, MACD, Moving Averages)</li>
                     <li>Options analysis & payoff visualization</li>
-                   极li>Institutional activity tracking</li>
+                    <li>Institutional activity tracking</li>
                 </ul>
             </div>
             """, unsafe_allow_html=True)
@@ -2704,7 +2704,7 @@ def main():
         with col3:
             st.markdown("""
             <div class="feature-card">
-                <h4>💹 Portfolio Optimization</极>
+                <h4>💹 Portfolio Optimization</h4>
                 <ul>
                     <li>Modern Portfolio Theory (MPT) implementation</li>
                     <li>Risk-adjusted allocation strategies</li>
@@ -2738,7 +2738,7 @@ def main():
                     <li>Strategy backtesting engine</li>
                     <li>Real-time market insights</li>
                 </ul>
-            </极>
+            </div>
             """, unsafe_allow_html=True)
         
         with col5:
@@ -2771,8 +2771,8 @@ def main():
                 <li><b style="color:#00c853;">Adjust date ranges</b> and forecast periods</li>
                 <li><b style="color:#00c853;">Explore different tabs</b> for various analyses</li>
                 <li><b style="color:#00c853;">Build portfolios</b> with multiple stocks</li>
-                <li><b style="极or:#00c853;">Ask questions</b> to the AI Assistant</li>
-                <极><b style="color:#00c853;">Test strategies</b> with historical data</li>
+                <li><b style="color:#00c853;">Ask questions</b> to the AI Assistant</li>
+                <li><b style="color:#00c853;">Test strategies</b> with historical data</li>
             </ol>
             <div style="text-align:center; margin-top:20px; padding:10px; background:rgba(0,200,83,0.1); border-radius:10px;">
                 <span style="font-size:2em;">👉</span>
@@ -2893,7 +2893,7 @@ def main():
                     st.markdown("#### Call Option Payoff")
                     strike = st.slider("Strike Price", current_price * 0.8, current_price * 1.2, current_price * 1.05)
                     premium = st.slider("Premium", 0.5, 20.0, 2.5)
-                    contracts = st.s极der("Contracts", 1, 100, 1)
+                    contracts = st.slider("Contracts", 1, 100, 1)
                     
                     prices, payoff = create_options_payoff(strike, premium, 'call', contracts)
                     fig_call = go.Figure()
@@ -2952,7 +2952,7 @@ def main():
                     prophet_model, prophet_forecast_df = prophet_forecast(data, forecast_days)
                     
                     st.subheader("Prophet Forecast")
-                    fig1 = plot_plotly(prophet_model, prophet_极ecast_df)
+                    fig1 = plot_plotly(prophet_model, prophet_forecast_df)
                     fig1.update_layout(
                         height=500,
                         template='plotly_dark',
@@ -2960,7 +2960,7 @@ def main():
                         xaxis_title="Date",
                         yaxis_title="Price"
                     )
-                    st.plotly_chart(f极, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True)
                     
                     st.subheader("Forecast Components")
                     fig2 = plot_components_plotly(prophet_model, prophet_forecast_df)
@@ -3085,7 +3085,7 @@ def main():
                 st.markdown(f"""
                 <div class="news-item {style}">
                     <b>{news['title']}</b><br>
-                    <i>{news.get('date', '')[:10]}</极><br>
+                    <i>{news.get('date', '')[:10]}</i><br>
                     <i>Sentiment:</i> {label.capitalize()} ({score:.2f})<br>
                     <a href="{news['link']}" target="_blank">Read more</a>
                 </div>
@@ -3140,7 +3140,7 @@ def main():
                     
                     # Earnings Forecast
                     st.markdown("#### Next Earnings Forecast")
-                    next_date = earnings_data.index[-1] + pd.DateOffset(months极)
+                    next_date = earnings_data.index[-1] + pd.DateOffset(months)
                     st.metric("Estimated Date", next_date.strftime("%Y-%m-%d"))
                     
                     col_est1, col_est2 = st.columns(2)
@@ -3360,7 +3360,7 @@ def main():
                     <small>Updated: {macro_data['last_updated']}</small>
                 </div>
             """, unsafe_allow_html=True)
-            col_m6.markdown极"""
+            col_m6.markdown"""
                 <div class="macro-metric">
                     <h5>Manufacturing PMI</h5>
                     <h3>{macro_data['manufacturing_pmi']}</h3>
@@ -3383,7 +3383,7 @@ def main():
                 <p>Current macroeconomic conditions suggest:</p>
                 <ul>
                     <li><b>Inflation</b> at {macro_data['inflation']}% may lead to tighter monetary policy</li>
-                    <li><b>Interest rates</b> at {macro_data['interest_rate']}% are impacting growth stocks</极>
+                    <li><b>Interest rates</b> at {macro_data['interest_rate']}% are impacting growth stocks</li>
                     <li><b>Consumer sentiment</b> of {macro_data['consumer_sentiment']} indicates moderate consumer confidence</li>
                 </ul>
             </div>
