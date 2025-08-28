@@ -647,7 +647,7 @@ def get_stock_data(ticker, start, end):
         for warning in validation_result['warnings']:
             st.warning(warning)
         
-极 Cache successful result
+        # Cache successful result
         smart_cache.set(cache_key, data, ttl=1800)  # 30 minutes
         
         quantum_logger.logger.info(
