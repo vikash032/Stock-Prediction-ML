@@ -714,113 +714,41 @@ def get_earnings_data(ticker):
     earnings.set_index('Earnings Date', inplace=True)
     return earnings.tail(4)
 
-def generate_ai_response(query, stock_data, portfolio_data=None, risk_profile="Moderate", investment_goal="Growth"):
-    """Generate AI-powered response to investment questions"""
-    # Convert query to lower case for better matching
-    query_lower = query.lower()
+
+# ------------------ GROQ AI ASSISTANT ------------------
+def get_groq_client():
+    """Initialize Groq client"""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return None
+    return Groq(api_key=api_key)
+
+def get_ai_response(client, prompt, context=""):
+    """Get response from Groq AI assistant"""
+    if not client:
+        return "Groq API key not configured. Please add GROQ_API_KEY to your environment variables."
     
-    # Get technical indicators
-    if 'Close' in stock_data.columns and not stock_data.empty:
-        close_series = stock_data['Close'].squeeze()
-        rsi = ta.momentum.RSIIndicator(close_series).rsi().iloc[-1] if len(close_series) > 0 else 50
-        macd = ta.trend.MACD(close_series).macd_diff().iloc[-1] if len(close_series) > 0 else 0
-        current_price = close_series.iloc[-1] if len(close_series) > 0 else 100
-        volatility = calculate_volatility(stock_data) if len(stock_data) > 30 else 20
-        
-        # Get comparison price (30 days ago or first available)
-        comparison_idx = max(0, len(close_series) - 30)
-        comparison_price = close_series.iloc[comparison_idx] if len(close_series) > comparison_idx else current_price
-        price_trend = "upward" if current_price > comparison_price else "downward"
-    else:
-        rsi, macd, current_price, volatility, price_trend = 50, 0, 100, 20, "neutral"
-    
-    # Define comprehensive responses with more context
-    responses = {
-        "risk": f"""
-        Based on our analysis:
-        - 30-day volatility: {volatility:.1f}% ({'above' if volatility > 30 else 'below'} sector average)
-        - RSI: {rsi:.1f} ({'overbought' if rsi > 70 else 'oversold' if rsi < 30 else 'neutral'})
-        - MACD: {'bullish' if macd > 0 else 'bearish'}
-        - Price trend: {price_trend} over last month
-        """,
-        "forecast": f"""
-        Our hybrid forecasting model predicts:
-        - Short-term (1 month): {np.random.uniform(-5,10):.1f}% change
-        - Medium-term (3 months): {np.random.uniform(-10,20):.1f}% change
-        - Long-term (1 year): {np.random.uniform(-15,30):.1f}% change
-        Technical indicators: 
-        - Support level: ${current_price * 0.95:.2f}
-        - Resistance level: ${current_price * 1.05:.2f}
-        """,
-        "portfolio": f"""
-        For your {risk_profile} risk profile and {investment_goal} investment goal:
-        - Recommended allocation: {np.random.randint(5,15)}% of portfolio
-        - Optimal entry point: ${current_price * 0.97:.2f}
-        - Position sizing: {np.random.randint(500,2000)} shares
-        - Hedge strategy: {'covered calls' if risk_profile == 'Conservative' else 'protective puts'}
-        """,
-        "buy": f"""
-        Based on current technicals and fundamentals:
-        - Current price: ${current_price:.2f}
-        - Target price: ${current_price * 1.12:.2f} (12% upside)
-        - Stop loss: ${current_price * 0.92:.2f} (8% downside)
-        - Risk-reward ratio: 1:{np.random.uniform(1.5,3.0):.1f}
-        Recommendation: {'Strong buy' if rsi < 40 and macd > 0 else 'Buy' if rsi < 50 else 'Accumulate on dips'}
-        """,
-        "sell": f"""
-        Analysis suggests:
-        - Current price: ${current_price:.2f}
-        - Target exit: ${current_price * 0.95:.2f}
-        - Potential downside: {np.random.uniform(5,15):.1f}%
-        - Technical indicators: {'bearish crossover' if macd < 0 else 'overbought conditions'}
-        Recommendation: {'Sell now' if rsi > 70 and macd < 0 else 'Set trailing stop' if rsi > 60 else 'Hold for now'}
-        """,
-        "outlook": f"""
-        12-month fundamental outlook:
-        - Projected EPS growth: {np.random.randint(5,25)}%
-        - P/E expansion potential: {np.random.randint(0,15)}%
-        - Sector outlook: {'positive' if np.random.random() > 0.5 else 'neutral'}
-        - Analyst consensus: {'Buy' if np.random.random() > 0.3 else 'Hold'}
-        Price target range: ${current_price * 0.9:.2f} - ${current_price * 1.25:.2f}
-        """,
-        "analysis": f"""
-        Multi-factor analysis:
-        - Technical score: {np.random.randint(60,90)}/100
-        - Fundamental score: {np.random.randint(50,95)}/100
-        - Sentiment score: {np.random.randint(40,85)}/100
-        - Risk assessment: {'Low' if volatility < 25 else 'Medium' if volatility < 40 else 'High'}
-        Composite rating: {'Strong' if np.random.random() > 0.5 else 'Moderate'}
-        """,
-        "default": f"""
-        Based on comprehensive analysis:
-        - Current technicals: {'Bullish' if macd > 0 else 'Bearish'}
-        - Market sentiment: {'Positive' if np.random.random() > 0.5 else 'Neutral'}
-        - Risk-adjusted return potential: {np.random.uniform(5,15):.1f}%
-        Recommendation: {'Buy' if macd > 0 and rsi < 60 else 'Hold' if rsi < 70 else 'Sell'}
-        Price targets: 
-          Short-term (1M): ${current_price * 1.05:.2f}
-          Medium-term (3M): ${current_price * 1.12:.2f}
-          Long-term (1Y): ${current_price * 1.25:.2f}
+    try:
+        system_prompt = f"""
+        You are a financial analyst assistant specializing in Indian stocks. Provide insightful, data-driven analysis about stocks and investments.
+        Use the following context information if relevant: {context}
+        Be concise but informative in your responses.
         """
-    }
-    
-    # Better keyword matching
-    if "risk" in query_lower:
-        return responses["risk"]
-    elif "forecast" in query_lower or "predict" in query_lower:
-        return responses["forecast"]
-    elif "portfolio" in query_lower or "allocat" in query_lower:
-        return responses["portfolio"]
-    elif "buy" in query_lower:
-        return responses["buy"]
-    elif "sell" in query_lower:
-        return responses["sell"]
-    elif "outlook" in query_lower or "future" in query_lower:
-        return responses["outlook"]
-    elif "analysis" in query_lower or "evaluat" in query_lower:
-        return responses["analysis"]
-    else:
-        return responses["default"]
+        
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            model="llama3-70b-8192",
+            temperature=0.3,
+            max_tokens=1024
+        )
+        
+        return chat_completion.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Groq API error: {str(e)}")
+        return f"Error getting AI response: {str(e)}"
 
 def get_macro_data():
     """Get macroeconomic data for India with realistic values"""
@@ -2261,73 +2189,71 @@ def main():
 
     # AI Assistant Tab
     with tab6:
-        st.markdown('<div class="header">🤖 AI Investment Assistant</div>', unsafe_allow_html=True)
-        st.markdown('<div class="subheader">Get insights and recommendations powered by AI</div>', unsafe_allow_html=True)
+        st.header("AI Investment Assistant")
+        
+        # Initialize Groq client
+        groq_client = get_groq_client()
+        
+        if not groq_client:
+            st.warning("Groq API key not configured. Please add GROQ_API_KEY to your environment variables to use the AI assistant.")
+        
+        # Create context from stock data
+        if not data.empty:
+            current_price = float(data['Close'].iloc[-1]) if not data.empty else 0
+            price_change = ((current_price - float(data['Close'].iloc[0])) / float(data['Close'].iloc[0]) * 100) if len(data) > 1 else 0
+            
+            context = f"""
+            Stock: {ticker}
+            Current Price: ₹{current_price:.2f}
+            Overall Change: {price_change:.2f}%
+            """
+            
+            if 'RSI' in data.columns and not data['RSI'].empty:
+                context += f"RSI: {float(data['RSI'].iloc[-1]):.2f}\n"
+            if 'Volatility' in data.columns and not data['Volatility'].empty:
+                context += f"Volatility: {float(data['Volatility'].iloc[-1])*100:.2f}%\n"
+        else:
+            context = f"Stock: {ticker}"
         
         # Sample questions
-        col_q1, col_q2, col_q3 = st.columns(3)
-        with col_q1:
-            if st.button("What's the risk profile for this stock?", key="q1"):
-                st.session_state.ai_query = "What's the risk profile for this stock?"
-        with col_q2:
-            if st.button("Should I buy or sell this stock?", key="q2"):
-                st.session_state.ai_query = "Should I buy or sell this stock?"
-        with col_q3:
-            if st.button("How does this fit in my portfolio?", key="q3"):
-                st.session_state.ai_query = "How does this fit in my portfolio?"
+        st.subheader("Sample Questions")
+        col1, col2, col3 = st.columns(3)
         
-        # Chat interface
-        with st.form("ai_assistant_form"):
-            query = st.text_area("Ask investment questions:", 
-                                st.session_state.get('ai_query', "What's the investment outlook for this stock?"))
-            submitted = st.form_submit_button("Get Analysis")
+        sample_questions = [
+            "What is the investment outlook for this stock?",
+            "What are the key risks associated with this stock?",
+            "How does technical analysis look for this stock?",
+            "What factors could drive this stock's price higher?",
+            "Should I consider this stock for long-term investment?",
+            "What is the analyst consensus for this stock?"
+        ]
         
-        if submitted:
-            with st.spinner('Generating insights...'):
-                response = generate_ai_response(query, data, portfolio_data, user_risk_profile, user_investment_goal)
-                st.markdown(f"""
-                <div class="ai-response">
-                    <h4>🔍 AI Analysis</h4>
-                    <p style="font-size:1.1em;">{response}</p>
-                    <div style="display:flex; justify-content:space-between; margin-top:20px;">
-                        <small>Generated at {datetime.now().strftime('%H:%M:%S')}</small>
-                        <small>Risk Profile: {user_risk_profile}</small>
-                        <small>Investment Goal: {user_investment_goal}</small>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        # Portfolio Recommendations
-        st.subheader("Personalized Recommendations")
-        st.markdown(f"""
-        <div class="feature-card">
-            <h4>Based on your profile: {user_risk_profile} risk, {user_investment_goal} focus</h4>
-            <ul>
-                <li><b>Asset Allocation:</b> {np.random.randint(60,80)}% equities, {np.random.randint(20,30)}% bonds, {np.random.randint(5,15)}% alternatives</li>
-                <li><b>Sector Focus:</b> Technology ({np.random.randint(30,40)}%), Healthcare ({np.random.randint(15,25)}%), Financials ({np.random.randint(10,20)}%)</li>
-                <li><b>Position Sizing:</b> Limit single positions to {np.random.randint(5,10)}% of portfolio</li>
-                <li><b>Rebalancing:</b> Quarterly rebalancing recommended</li>
-                <li><b>Tax Optimization:</b> {'Tax-loss harvesting' if np.random.random() > 0.5 else 'Long-term holding strategy'}</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Market Insights
-        st.subheader("Market Insights")
-        st.markdown(f"""
-        <div class="feature-card">
-            <h4>Current Market Conditions</h4>
-            <p>Our analysis of macroeconomic factors and market sentiment indicates:</p>
-            <ul>
-                <li><b>Market Phase:</b> {'Bull market' if sentiment_score > 60 else 'Bear market' if sentiment_score < 40 else 'Neutral market'}</li>
-                <li><b>Recommended Strategy:</b> {'Growth focus' if sentiment_score > 60 else 'Defensive positioning' if sentiment_score < 40 else 'Balanced approach'}</li>
-                <li><b>Key Opportunity:</b> {'Technology sector' if np.random.random() > 0.5 else 'Emerging markets'}</li>
-                <li><b>Key Risk:</b> {'Interest rate hikes' if np.random.random() > 0.5 else 'Geopolitical tensions'}</li>
-                <li><b>Portfolio Action:</b> {'Rebalance towards value stocks' if np.random.random() > 0.5 else 'Increase cash position'}</li>
-           </ul>
-       </div>
-       """, unsafe_allow_html=True)
+        if col1.button(sample_questions[0]):
+            st.session_state.user_question = sample_questions[0]
+        if col1.button(sample_questions[1]):
+            st.session_state.user_question = sample_questions[1]
+        if col2.button(sample_questions[2]):
+            st.session_state.user_question = sample_questions[2]
+        if col2.button(sample_questions[3]):
+            st.session_state.user_question = sample_questions[3]
+        if col3.button(sample_questions[4]):
+            st.session_state.user_question = sample_questions[4]
+        if col3.button(sample_questions[5]):
+            st.session_state.user_question = sample_questions[5]
         
+        # User input
+        user_question = st.text_input(
+            "Ask a question about this stock:",
+            value=st.session_state.get('user_question', ''),
+            key="user_input"
+        )
+        
+        if st.button("Get Answer") and user_question:
+            with st.spinner('Thinking...'):
+                response = get_ai_response(groq_client, user_question, context)
+                
+                st.subheader("AI Assistant Response")
+                st.info(response)
 
     # Strategy Tester Tab
     with tab7:
