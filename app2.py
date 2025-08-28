@@ -597,28 +597,33 @@ def main():
     # Technical Analysis Tab
     with tab2:
         st.header("Technical Analysis")
-        
+    
         # Display technical indicators
         st.subheader("Technical Indicators")
         st.plotly_chart(plot_technical_indicators(data), use_container_width=True)
-        
+    
         # Feature importance (simplified)
         st.subheader("Feature Correlation with Price")
         if len(data) > 30:  # Ensure we have enough data
             numeric_data = data.select_dtypes(include=[np.number])
-            corr = numeric_data.corr()['Close'].sort_values(ascending=False)
+        
+            # Check if 'Close' exists in numeric_data
+            if 'Close' in numeric_data.columns:
+                corr = numeric_data.corr()['Close'].sort_values(ascending=False)
             
-            # Remove price itself from correlation list
-            corr = corr.drop('Close', errors='ignore')
+                # Remove price itself from correlation list
+                corr = corr.drop('Close', errors='ignore')
             
-            fig = px.bar(
-                x=corr.values, 
-                y=corr.index, 
-                orientation='h',
-                title='Feature Correlation with Closing Price',
-                labels={'x': 'Correlation', 'y': 'Feature'}
-            )
-            st.plotly_chart(fig, use_container_width=True)
+                fig = px.bar(
+                    x=corr.values, 
+                    y=corr.index, 
+                    orientation='h',
+                    title='Feature Correlation with Closing Price',
+                    labels={'x': 'Correlation', 'y': 'Feature'}
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Close price data not available for correlation analysis")
     
     # Prediction Tab
     with tab3:
